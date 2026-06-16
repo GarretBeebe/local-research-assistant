@@ -26,7 +26,7 @@ Designed to run on a GMKtec K16 (Ryzen 7 7735HS, 32GB LPDDR5) as a primary targe
 | Researcher agent (×N) | `llama3.1:8b` | Each instance handles one planner sub-task; runs in parallel with other researcher workers |
 | Synthesizer | `qwen2.5:7b` | Single call after all researchers complete; merges results, adds citations |
 | Critic / checker | `qwen2.5:3b` | Minimal task (is this correct?), keep it cheap |
-| Embeddings | `nomic-embed-text` | Stays resident in a dedicated embedding-only Ollama instance (port 11436); never shares an instance with generation models |
+| Embeddings | `nomic-embed-text` | Stays resident in a dedicated embedding-only Ollama instance (port 11434); never shares an instance with generation models |
 
 **Hardware notes:**
 - Enable iGPU offloading in Ollama (`OLLAMA_GPU_LAYERS`) to leverage the Radeon 680M — expect ~30–50% latency improvement on the 14B model
@@ -99,7 +99,8 @@ User query
 │  - Vector RAG                   │    which tools are loaded is config-driven,
 │  - Graph RAG                    │    not hardcoded
 │  - Coding assistant             │
-│  - File reader / web fetch      │
+│  - File reader                  │
+│  - Web fetch (opt-in, off)      │
 │  - … any Tool implementation    │
 └─────────────────────────────────┘
            │
@@ -217,7 +218,7 @@ The planner receives the registry's tool schemas at runtime and selects from wha
   - Security headers middleware: `X-Content-Type-Options`, `X-Frame-Options`, `Content-Security-Policy: default-src 'self'` (plain HTML only; Gradio is not permitted in networked deployments)
   - Document ingestion: symlink rejection, `path.resolve()` + docs-root boundary check, 10 MB size limit before read, extension allowlist, MIME/magic-byte validation (`python-magic`), PDF extraction in subprocess with 30s timeout and 500-page limit, 50 MB extracted-text limit
   - All SQLite queries use `?` parameterized placeholders
-  - Docker: run app as non-root `appuser`, mount docs directory read-only
+  - Docker: run app as non-root `appuser`, mount existing docs corpus read-only; uploads land in a separate writable staging volume (`UPLOAD_STAGING_DIR`) with size quota and post-indexing cleanup
 - [ ] Document the Ollama prerequisite and `tools.yaml` configuration in a setup guide
 
 **Success criterion:** A non-technical user could add a document and query it without touching the terminal. A developer on Linux or macOS could stand up the stack with `docker compose up` after installing Ollama natively.
@@ -289,11 +290,14 @@ The server enforces a hard binding rule at startup, checked before any request i
 - Bearer token (`API_KEY`, min 32 chars) validated with `hmac.compare_digest()` — accepted on `/v1/*` API endpoints only
 - Session auth: bcrypt passwords, `secrets.token_hex(32)` session tokens, 8-hour expiry, HttpOnly + Secure + SameSite=Lax cookies — accepted on browser UI endpoints only
 - API endpoints do not accept session cookies; UI endpoints do not accept bearer tokens. No endpoint accepts both.
+- **CSRF protection** on all cookie-authenticated state-changing UI routes (POST/PUT/DELETE): require a per-session CSRF token in a custom request header (`X-CSRF-Token`) or double-submit cookie. SameSite=Lax is not sufficient alone — it does not protect against same-site requests or direct navigation POSTs. Read-only GET routes are exempt.
+- **TLS requirement**: the `Secure` cookie flag requires HTTPS. For LAN/networked deployments, TLS must be provided by a reverse proxy (Caddy or nginx) that terminates TLS and forwards to the app over localhost. The app detects HTTPS via `X-Forwarded-Proto: https` from a trusted proxy IP and sets `Secure=True` on cookies; without it (plain HTTP dev), `Secure=False`. `ALLOW_INSECURE_LOCALONLY=true` always sets `Secure=False` and is incompatible with LAN exposure.
 
 ### Rate limiting (Phase 4)
 - Per-IP token-bucket on all API endpoints (default: 30 req/60s)
 - Tighter limit on login endpoint (default: 10 attempts/60s)
 - Important here: each query invokes multiple LLM calls, so unconstrained hammering has significant compute cost
+- **Reverse proxy IP trust**: `X-Forwarded-For` is only trusted when the request arrives from a configured `TRUSTED_PROXY_IPS` list (same pattern as `local-graph-rag/web/security.py`). If the list is empty (direct bind, no proxy), the connecting IP is used directly. Without this, all users behind a proxy collapse to the same rate-limit bucket, and a client can spoof its IP by injecting the header.
 
 ### Security headers (Phase 4)
 - `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Content-Security-Policy: default-src 'self'` via FastAPI middleware
@@ -321,7 +325,8 @@ The server enforces a hard binding rule at startup, checked before any request i
 
 ### Container security (Phase 4)
 - App container runs as non-root `appuser`
-- Docs directory mounted read-only (`:ro`) in docker-compose
+- Existing docs corpus directory mounted read-only (`:ro`) in docker-compose — this directory is never written to by the app
+- Uploads use a separate writable staging directory (`UPLOAD_STAGING_DIR`) with a configured size quota and automatic cleanup (files removed after indexing completes or on failure). Originals are not persisted beyond the staging window unless explicitly configured. The staging directory is a named Docker volume, not a host-path mount.
 
 ### Model allowlist (Phase 1)
 - `ALLOWED_MODELS` defined in config; all model names in `config.py` must be in the allowlist
@@ -333,6 +338,15 @@ The server enforces a hard binding rule at startup, checked before any request i
 - Reject relative imports (module paths starting with `.`)
 - Reject duplicate tool names in the loaded registry
 - Reject class names that do not match the expected name for their module (no aliasing tricks)
+
+### Web fetch tool — SSRF controls (optional tool, disabled by default)
+The web fetch tool conflicts with the "fully offline" project goal and is disabled by default (`enabled: false` in `tools.yaml`). When enabled by the operator, the following controls apply:
+- **URL scheme allowlist**: `https://` only; reject `http://`, `file://`, `ftp://`, `gopher://`, and all other schemes
+- **DNS/IP resolution check**: resolve the hostname before connecting; reject any result that is a loopback address (127.0.0.0/8, ::1), link-local (169.254.0.0/16, fe80::/10), private range (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fc00::/7), or unroutable (0.0.0.0, ::0). Re-check after any redirect.
+- **Redirect limit**: max 3 redirects; re-validate each redirect destination against the IP blocklist
+- **Response limits**: max 5 MB response body, 10s total timeout
+- **No cookies or auth headers forwarded** from the app to external hosts
+- Document explicitly in `tools.yaml` that enabling this tool breaks the offline guarantee
 
 ### Multi-agent prompt injection (Phase 1, novel to this architecture)
 The planner generates a structured task list that becomes instructions dispatched to N researcher agents — a wider attack surface than single-agent RAG. Two mitigations:
