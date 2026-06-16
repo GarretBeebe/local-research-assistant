@@ -157,7 +157,7 @@ The planner receives the registry's tool schemas at runtime and selects from wha
 
 - [ ] Set up three Ollama instances with iGPU offloading configured: port 11434 (embeddings, `keep_alive=-1`), port 11435 (generation primary: planner + synthesizer), port 11436 (generation researchers: researcher workers + critic on demand)
 - [ ] Define the `Tool` protocol and `ToolRegistry` in `tools/base.py` and `tools/registry.py`
-- [ ] Implement `tools.yaml` config loading with `yaml.safe_load()` — registry validates that every `module` path starts with `tools.` before importing; hard error at startup if not
+- [ ] Implement `tools.yaml` config loading with `yaml.safe_load()` — registry validates each `module` + `class` pair against an explicit compile-time allowlist of known tool implementations; reject relative imports, duplicate names, and unlisted pairs with a hard startup error (a prefix check alone is insufficient)
 - [ ] Define `ALLOWED_MODELS` in `config.py`; validate all configured model names against it at startup with a hard error if any are missing
 - [ ] Wrap existing vector RAG as a `Tool` implementation (`VectorRAGTool`)
 - [ ] Wrap existing Graph RAG as a `Tool` implementation (`GraphRAGTool`)
@@ -176,7 +176,7 @@ The planner receives the registry's tool schemas at runtime and selects from wha
 
 **Goal:** parallel agent execution, shared memory store, measurable latency improvement.
 
-- [ ] Implement parallel agent dispatch using `asyncio` + two Ollama instances: N independent researcher workers, each handling one planner sub-task; orchestrator collects all results before passing to synthesizer
+- [ ] Implement parallel agent dispatch using `asyncio` + three Ollama instances (11434 embeddings, 11435 planner/synthesizer, 11436 researchers/critic): N independent researcher workers, each handling one planner sub-task; orchestrator collects all results before passing to synthesizer
 - [ ] Have each researcher return a structured result object (source IDs, chunk IDs, excerpts, token counts) — no writes to ChromaDB during a query
 - [ ] Synthesizer receives the list of result objects directly from the orchestrator
 - [ ] Add a resource governor: concurrency limit (max 2 researchers at once), per-call context length cap, memory pressure fallback that reduces parallelism to 1 when available system memory drops below a configurable threshold (default: 6 GB free). Measure pressure via `psutil.virtual_memory().available` (captures OS, WSL2, Docker, and Ollama process footprint) plus swap activity (`psutil.swap_memory().sin > 0` as a hard signal); app RSS alone is not sufficient as it excludes native Ollama and GPU shared memory
@@ -204,7 +204,7 @@ The planner receives the registry's tool schemas at runtime and selects from wha
 
 **Goal:** usable day-to-day without touching the CLI.
 
-- [ ] Simple web UI using FastAPI + a minimal HTML frontend (or Gradio for speed)
+- [ ] Simple web UI using FastAPI + a minimal HTML frontend (Gradio is permitted as a local dev prototype only — it is incompatible with the strict CSP required for networked deployment and must be replaced with plain HTML before Phase 4 is considered complete)
 - [ ] Document ingestion endpoint: drag-and-drop PDFs/markdown files → auto-indexed into both RAG stores
 - [ ] Query history: store past queries + answers in SQLite, searchable
 - [ ] Background indexing: new documents get indexed without blocking the UI
@@ -288,7 +288,7 @@ The server enforces a hard binding rule at startup, checked before any request i
 
 ### Authentication (Phase 4)
 - Bearer token (`API_KEY`, min 32 chars) validated with `hmac.compare_digest()` — accepted on `/v1/*` API endpoints only
-- Session auth: bcrypt passwords, `secrets.token_hex(32)` session tokens, 8-hour expiry, HttpOnly + Secure + SameSite=Lax cookies — accepted on browser UI endpoints only
+- Session auth: bcrypt passwords, `secrets.token_hex(32)` session tokens, 8-hour expiry, HttpOnly + SameSite=Lax cookies — accepted on browser UI endpoints only. `Secure=True` only when HTTPS is confirmed via `X-Forwarded-Proto: https` from a trusted proxy IP or when the app itself terminates TLS; `Secure=False` on plain-HTTP local dev and in `ALLOW_INSECURE_LOCALONLY` mode.
 - API endpoints do not accept session cookies; UI endpoints do not accept bearer tokens. No endpoint accepts both.
 - **CSRF protection** on all cookie-authenticated state-changing UI routes (POST/PUT/DELETE): require a per-session CSRF token in a custom request header (`X-CSRF-Token`) or double-submit cookie. SameSite=Lax is not sufficient alone — it does not protect against same-site requests or direct navigation POSTs. Read-only GET routes are exempt.
 - **TLS requirement**: the `Secure` cookie flag requires HTTPS. For LAN/networked deployments, TLS must be provided by a reverse proxy (Caddy or nginx) that terminates TLS and forwards to the app over localhost. The app detects HTTPS via `X-Forwarded-Proto: https` from a trusted proxy IP and sets `Secure=True` on cookies; without it (plain HTTP dev), `Secure=False`. `ALLOW_INSECURE_LOCALONLY=true` always sets `Secure=False` and is incompatible with LAN exposure.
@@ -342,7 +342,7 @@ The server enforces a hard binding rule at startup, checked before any request i
 ### Web fetch tool — SSRF controls (optional tool, disabled by default)
 The web fetch tool conflicts with the "fully offline" project goal and is disabled by default (`enabled: false` in `tools.yaml`). When enabled by the operator, the following controls apply:
 - **URL scheme allowlist**: `https://` only; reject `http://`, `file://`, `ftp://`, `gopher://`, and all other schemes
-- **DNS/IP resolution check**: resolve the hostname before connecting; reject any result that is a loopback address (127.0.0.0/8, ::1), link-local (169.254.0.0/16, fe80::/10), private range (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fc00::/7), or unroutable (0.0.0.0, ::0). Re-check after any redirect.
+- **DNS/IP resolution check**: resolve the hostname before connecting; reject any result that is a loopback address (127.0.0.0/8, ::1), link-local (169.254.0.0/16, fe80::/10), private range (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fc00::/7), or unroutable (0.0.0.0, ::0). Connect using the resolved IP directly (do not re-resolve the hostname at connect time) and verify the peer address after connect matches the checked IP — this prevents DNS rebinding, where a TTL=0 record returns a public IP for the check but a private IP for the actual connection. Re-check after any redirect.
 - **Redirect limit**: max 3 redirects; re-validate each redirect destination against the IP blocklist
 - **Response limits**: max 5 MB response body, 10s total timeout
 - **No cookies or auth headers forwarded** from the app to external hosts
