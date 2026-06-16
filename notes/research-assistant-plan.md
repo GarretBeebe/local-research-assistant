@@ -210,12 +210,12 @@ The planner receives the registry's tool schemas at runtime and selects from wha
 - [ ] Optional: streaming output so partial answers appear as agents complete
 - [ ] Docker Compose packaging: containerize the FastAPI app, ChromaDB, and SQLite; Ollama remains a native prerequisite (required for GPU access on all platforms)
 - [ ] Security hardening for the web UI and ingestion endpoint:
-  - Pydantic request validation (max query 12K chars, max messages 200, model name 128 chars)
-  - Bearer token auth (`hmac.compare_digest()`), bcrypt session passwords, `secrets.token_hex(32)` session tokens, 8-hour expiry, HttpOnly + Secure + SameSite=Lax cookies
-  - `ALLOW_INSECURE_LOCALONLY=true` flag with startup warning; conflict-check with `CORS_ORIGINS=*`
+  - Pydantic request validation per pipeline caps (query 12K chars, messages 200, model name 128 chars, chunks per query 20, planner tasks 10)
+  - Local exposure invariant at startup: `ALLOW_INSECURE_LOCALONLY=true` hard-binds to 127.0.0.1/::1 and fails closed if `HOST` is 0.0.0.0 or any LAN address; ambiguous config (no API_KEY and no insecure flag) also fails closed
+  - Bearer token auth (`hmac.compare_digest()`) on `/v1/*` API endpoints only; session cookies (bcrypt, `secrets.token_hex(32)`, 8-hour expiry, HttpOnly + Secure + SameSite=Lax) on browser UI endpoints only — no endpoint accepts both
   - Per-IP rate limiting (30 req/60s general, 10/60s login) via token-bucket middleware
-  - Security headers middleware: `X-Content-Type-Options`, `X-Frame-Options`, `Content-Security-Policy`
-  - Document ingestion: symlink rejection, `path.resolve()` + docs-root boundary check, 10 MB size limit before read, extension allowlist (PDF/Markdown/TXT)
+  - Security headers middleware: `X-Content-Type-Options`, `X-Frame-Options`, `Content-Security-Policy: default-src 'self'` (plain HTML only; Gradio is not permitted in networked deployments)
+  - Document ingestion: symlink rejection, `path.resolve()` + docs-root boundary check, 10 MB size limit before read, extension allowlist, MIME/magic-byte validation (`python-magic`), PDF extraction in subprocess with 30s timeout and 500-page limit, 50 MB extracted-text limit
   - All SQLite queries use `?` parameterized placeholders
   - Docker: run app as non-root `appuser`, mount docs directory read-only
 - [ ] Document the Ollama prerequisite and `tools.yaml` configuration in a setup guide
@@ -259,14 +259,36 @@ The planner receives the registry's tool schemas at runtime and selects from wha
 
 This project follows the same security patterns established in `local-graph-rag` and `rag-system`. Controls are listed here; implementation tasks are distributed into the relevant phases below.
 
-### Input validation
-- All API endpoints validated via Pydantic at the boundary: max query length (12K chars), max message count (200), max model name length (128 chars)
-- CLI entry point enforces a bare query-length check before calling the planner
+### Input validation and pipeline caps
+API boundary (Pydantic):
+- Max query length: 12K chars
+- Max message count per conversation: 200
+- Max model name length: 128 chars
+
+Ingestion caps:
+- Max file size before read: 10 MB
+- Max extracted text per document: 50 MB
+- Max pages per PDF: 500
+
+Pipeline caps (enforced by orchestrator, not by LLM):
+- Max chunks returned per query: 20
+- Max tool calls per agent per turn: 5
+- Max tasks in planner output: 10
+- Max concurrent researcher workers: 2 (resource governor may reduce to 1)
+- Max final context tokens passed to synthesizer: 8K
+
+CLI entry point enforces a bare query-length check before calling the planner.
+
+### Local exposure invariant
+The server enforces a hard binding rule at startup, checked before any request is accepted:
+- **Insecure mode** (`ALLOW_INSECURE_LOCALONLY=true`): server must bind to `127.0.0.1` or `::1` only. If `HOST` is `0.0.0.0`, any LAN address, or unset while insecure mode is on, startup fails with a hard error — no warning, no fallback. `CORS_ORIGINS=*` is also rejected in combination with insecure mode.
+- **Authenticated mode**: any bind address is allowed; LAN exposure requires auth to be configured.
+- **Ambiguous config** (e.g., no `API_KEY` set and `ALLOW_INSECURE_LOCALONLY` not explicitly set): startup fails closed with a clear error directing the operator to set one or the other.
 
 ### Authentication (Phase 4)
-- Bearer token (`API_KEY`, min 32 chars) validated with `hmac.compare_digest()` — same pattern as `local-graph-rag/web/auth.py`
-- Session auth: bcrypt passwords, `secrets.token_hex(32)` session tokens, 8-hour expiry, HttpOnly + Secure + SameSite=Lax cookies
-- `ALLOW_INSECURE_LOCALONLY=true` bypasses auth with a startup warning; forbidden in combination with `CORS_ORIGINS=*`
+- Bearer token (`API_KEY`, min 32 chars) validated with `hmac.compare_digest()` — accepted on `/v1/*` API endpoints only
+- Session auth: bcrypt passwords, `secrets.token_hex(32)` session tokens, 8-hour expiry, HttpOnly + Secure + SameSite=Lax cookies — accepted on browser UI endpoints only
+- API endpoints do not accept session cookies; UI endpoints do not accept bearer tokens. No endpoint accepts both.
 
 ### Rate limiting (Phase 4)
 - Per-IP token-bucket on all API endpoints (default: 30 req/60s)
@@ -275,12 +297,16 @@ This project follows the same security patterns established in `local-graph-rag`
 
 ### Security headers (Phase 4)
 - `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Content-Security-Policy: default-src 'self'` via FastAPI middleware
+- **Gradio and CSP are incompatible**: Gradio loads scripts and styles from external CDNs and injects inline scripts, requiring `unsafe-inline` and external origins in the CSP — which negates the header. Plain HTML is the only UI option that supports a strict `default-src 'self'` policy. If Gradio is chosen for speed during development, document that it must be replaced before any networked deployment.
 
 ### Document ingestion hardening (Phase 4)
 - Symlink rejection before read
 - `path.resolve()` + root boundary check (resolved path must remain under configured docs root)
 - File size limit enforced before read (10 MB max)
 - Extension allowlist: PDF, Markdown, plain text only
+- MIME / magic-byte check: read the first 512 bytes and validate actual file type against the declared extension using `python-magic`; reject mismatches before passing to any parser
+- PDF extraction runs in a subprocess with a hard timeout (30s) and page limit (500 pages); the calling process treats any timeout or crash as a rejected file, not a retry
+- Decompression-bomb protection: reject any file that expands beyond 50 MB of extracted text regardless of compressed size
 
 ### SQL safety (Phase 4)
 - All SQLite queries use `?` parameterized placeholders; no string interpolation
@@ -302,14 +328,18 @@ This project follows the same security patterns established in `local-graph-rag`
 - Validated at startup with a hard error if any configured model is not in the list
 
 ### Tool registry safety (Phase 1)
-- At registry load time, each `module` path in `tools.yaml` must start with `tools.` (or a configurable prefix); anything else is rejected with a hard startup error
 - `tools.yaml` is operator-controlled only — no user input ever reaches the registry loader
+- At registry load time, each `module` + `class` pair is validated against an explicit compile-time allowlist of known tool implementations (e.g., `{"tools.vector_rag": ["VectorRAGTool"], "tools.graph_rag": ["GraphRAGTool"], ...}`); any unlisted combination is rejected with a hard startup error. A prefix check alone (e.g., `starts with "tools."`) is insufficient because it still permits loading arbitrary code within the namespace.
+- Reject relative imports (module paths starting with `.`)
+- Reject duplicate tool names in the loaded registry
+- Reject class names that do not match the expected name for their module (no aliasing tricks)
 
 ### Multi-agent prompt injection (Phase 1, novel to this architecture)
 The planner generates a structured task list that becomes instructions dispatched to N researcher agents — a wider attack surface than single-agent RAG. Two mitigations:
 
-1. **Prompt construction**: User queries and retrieved document chunks appear as isolated data values in static prompt templates, never as instruction text — same pattern as existing projects
-2. **Planner output validation**: Treat planner output as untrusted. Before dispatching any researcher, validate the task list against a strict JSON schema: allowed tool names must exist in the registry, model names must be in `ALLOWED_MODELS`. Tasks that fail validation are rejected; the planner is retried once with the validation error appended.
+1. **Prompt construction**: User queries and retrieved document chunks appear as isolated data values in static prompt templates, never as instruction text. System prompts explicitly state that retrieved content cannot change: tool selection, model selection, output schema, citation format, task routing, or any system-level behavior. The model is instructed to treat anything in the context block as passive data only.
+2. **Citation integrity**: Citations in the final answer must reference chunk IDs from the retrieved result objects only. The synthesizer is instructed never to generate or invent citations from model knowledge; the critic checks that every citation ID exists in the result set.
+3. **Planner output validation**: Treat planner output as untrusted. Before dispatching any researcher, validate the task list against a strict JSON schema: allowed tool names must exist in the registry, model names must be in `ALLOWED_MODELS`. Tasks that fail validation are rejected; the planner is retried once with the validation error appended.
 
 ---
 
