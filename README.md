@@ -42,7 +42,9 @@ Full diagram, shared memory design, and rationale in the [project plan](notes/re
 
 ## Hardware & models
 
-Designed to run on a GMKtec K16 (Ryzen 7 7735HS, 32GB LPDDR5) with iGPU offloading via Ollama, using two Ollama instances for parallel agent execution.
+Designed to run on a GMKtec K16 (Ryzen 7 7735HS, 32GB LPDDR5) with iGPU offloading via Ollama, using two Ollama instances for parallel agent execution. Both instances share a single model directory — models are downloaded once.
+
+The iGPU draws from the same 32GB LPDDR5 pool as system RAM. Total memory budget for all models + RAG stores + OS is approximately 22–27 GB with the critic loaded on demand (recommended) or 24–29 GB with all models resident. Expect paging and degraded latency if usage exceeds ~28 GB.
 
 | Role | Model |
 |---|---|
@@ -59,7 +61,7 @@ Designed to run on a GMKtec K16 (Ryzen 7 7735HS, 32GB LPDDR5) with iGPU offloadi
 | LLM calls | `ollama` Python SDK |
 | Parallelism | `asyncio` + `httpx` |
 | Vector store | ChromaDB |
-| Graph store | Neo4j or NetworkX |
+| Graph store | NetworkX |
 | Web framework | FastAPI |
 | UI | Gradio or plain HTML |
 | Persistence | SQLite |

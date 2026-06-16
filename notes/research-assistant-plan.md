@@ -30,8 +30,27 @@ Builds directly on existing work: the vector RAG, Graph RAG, and coding assistan
 
 **Hardware notes:**
 - Enable iGPU offloading in Ollama (`OLLAMA_GPU_LAYERS`) to leverage the Radeon 680M — expect ~30–50% latency improvement on the 14B model
-- Run two Ollama instances on different ports to allow true parallel agent execution
-- 32GB LPDDR5 is sufficient to keep all models loaded simultaneously without swapping
+- Run two Ollama instances on different ports to allow true parallel agent execution; both read from the same model directory (`%USERPROFILE%\.ollama\models`) — models are downloaded once, not twice
+- The iGPU shares the same 32GB LPDDR5 pool as system RAM; offloading GPU layers does not add memory, it trades inference speed for headroom
+- Keep the critic (`qwen2.5:3b`) off the always-loaded set — load it on demand to save ~2 GB during the research pipeline
+
+**Memory budget (approximate, 4-bit quantization):**
+
+| Component | RAM |
+|---|---|
+| `qwen2.5:14b` | ~8–9 GB |
+| `llama3.1:8b` | ~5 GB |
+| `qwen2.5:7b` | ~4 GB |
+| `qwen2.5:3b` | ~2 GB (on demand) |
+| `nomic-embed-text` | ~270 MB |
+| ChromaDB vector index | ~100 MB–1 GB |
+| NetworkX graph (in-memory) | ~100 MB–2 GB |
+| Python processes + app | ~500 MB |
+| Windows 11 OS | ~4–5 GB |
+| **Total (critic resident)** | **~24–29 GB** |
+| **Total (critic on demand)** | **~22–27 GB** |
+
+32 GB is sufficient for a personal document corpus, but leaves limited headroom. If total usage exceeds ~28 GB, Windows will begin paging and query latency will degrade significantly. Monitor with `ollama ps` + Task Manager during initial runs.
 
 ---
 
@@ -153,7 +172,7 @@ User query
 | LLM calls | `ollama` Python SDK | Native streaming support |
 | Parallelism | `asyncio` + `httpx` | Two Ollama instances, async calls |
 | Vector store | ChromaDB | Lightweight, file-based, no separate server needed |
-| Graph store | Neo4j or NetworkX | Use NetworkX if keeping it simple/offline |
+| Graph store | NetworkX | In-memory, no separate server; sufficient for personal corpus scale. Neo4j only if graph exceeds available RAM |
 | Embeddings | `nomic-embed-text` via Ollama | Already in your stack |
 | Web framework | FastAPI | Minimal, fast, good async support |
 | UI | Gradio or plain HTML | Gradio for speed, plain HTML for control |
@@ -168,7 +187,7 @@ User query
 | Planner outputs malformed JSON | Medium | Strict output schema in system prompt + validation layer with retry |
 | 14B model too slow for interactive use | Medium | iGPU offloading + single planner call design; set expectation of 60–90s |
 | Agents hallucinate citations | Medium | Critic pass + force agents to quote chunk IDs, not generate citations freehand |
-| RAM pressure when all models loaded | Low | 32GB is sufficient; monitor with `ollama ps`, evict summarizer if needed |
+| RAM pressure when all models loaded | Medium | Total budget is ~22–29 GB against a 32 GB pool shared with the iGPU; keep critic off the always-loaded set, monitor with `ollama ps` + Task Manager, evict summarizer if needed |
 | Graph RAG and vector RAG return conflicting results | Low | Synthesizer prompt explicitly handles contradiction; critic flags it |
 
 ---
