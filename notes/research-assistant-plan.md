@@ -26,12 +26,16 @@ Designed to run on a GMKtec K16 (Ryzen 7 7735HS, 32GB LPDDR5) as a primary targe
 | Researcher agent (×N) | `llama3.1:8b` | Each instance handles one planner sub-task; runs in parallel with other researcher workers |
 | Synthesizer | `qwen2.5:7b` | Single call after all researchers complete; merges results, adds citations |
 | Critic / checker | `qwen2.5:3b` | Minimal task (is this correct?), keep it cheap |
-| Embeddings | `nomic-embed-text` | Stay resident in RAM throughout, near-instant retrieval |
+| Embeddings | `nomic-embed-text` | Stays resident in a dedicated embedding-only Ollama instance (port 11436); never shares an instance with generation models |
 
 **Hardware notes:**
 - Enable iGPU offloading in Ollama (`OLLAMA_GPU_LAYERS`) to leverage the Radeon 680M — expect ~30–50% latency improvement on the 14B model
-- Run two Ollama instances on different ports to allow true parallel agent execution; both read from the same model directory (`%USERPROFILE%\.ollama\models`) — models are downloaded once, not twice
-- **Runtime memory policy:** Each instance can independently load model weights and KV cache into RAM. Set `OLLAMA_MAX_LOADED_MODELS=1` per instance so each holds exactly one model at a time. Set `keep_alive=5m` so idle models are evicted before the next pipeline stage loads. Set `OLLAMA_NUM_CTX` to a fixed limit per model (4096 recommended) to cap KV-cache growth — at ctx=4096 a 7B model adds ~300–500 MB of KV cache per loaded context. With these settings: two running instances hold at most two models in RAM simultaneously, which matches the budget below.
+- Run **three** Ollama instances, all reading from the same model directory (`%USERPROFILE%\.ollama\models`) — models are downloaded once, not duplicated:
+  - **Instance A (port 11434) — embeddings only:** `nomic-embed-text`, `OLLAMA_MAX_LOADED_MODELS=1`, `keep_alive=-1` (never evict). Embedding calls throughout the pipeline always route here.
+  - **Instance B (port 11435) — generation, primary:** planner (`qwen2.5:14b`) and synthesizer (`qwen2.5:7b`). `OLLAMA_MAX_LOADED_MODELS=1`, `keep_alive=5m`.
+  - **Instance C (port 11436) — generation, researchers:** researcher workers (`llama3.1:8b`) and critic (`qwen2.5:3b`, on demand). `OLLAMA_MAX_LOADED_MODELS=1`, `keep_alive=5m`.
+- **Runtime memory policy:** `OLLAMA_MAX_LOADED_MODELS=1` per instance ensures each holds at most one model at a time. `OLLAMA_NUM_CTX=4096` caps KV-cache growth — at ctx=4096 a 7B model adds ~300–500 MB per loaded context. Maximum simultaneous RAM footprint: nomic-embed-text (270 MB) + one generation model from B + one generation model from C.
+- **Model-load churn budget:** Instance B sequences planner → synthesizer (one 14B→7B swap). Instance C holds `llama3.1:8b` for all researcher workers, then swaps to `qwen2.5:3b` for the critic if used — one swap. Measure cold model-load time for each model in Phase 2 benchmarks; if 14B cold-load exceeds ~30s, pre-warm instance B before accepting queries.
 - The iGPU shares the same 32GB LPDDR5 pool as system RAM; offloading GPU layers does not add memory, it trades inference speed for headroom
 - Keep the critic (`qwen2.5:3b`) off the always-loaded set — load it on demand to save ~2 GB during the research pipeline
 
@@ -45,7 +49,7 @@ Designed to run on a GMKtec K16 (Ryzen 7 7735HS, 32GB LPDDR5) as a primary targe
 | `qwen2.5:3b` | ~2 GB (on demand) |
 | `nomic-embed-text` | ~270 MB |
 | ChromaDB vector index | ~100 MB–1 GB |
-| NetworkX graph (in-memory) | ~100 MB–2 GB |
+| Graph store (SQLite on disk; per-query NetworkX subgraph) | ~10–50 MB (subgraph only; full graph not resident) |
 | Python processes + app | ~500 MB |
 | Windows 11 OS | ~4–5 GB |
 | **Total (critic resident)** | **~24–29 GB** |
@@ -150,7 +154,7 @@ The planner receives the registry's tool schemas at runtime and selects from wha
 
 **Goal:** planner + researcher + RAG tool, end-to-end, no parallelism yet.
 
-- [ ] Set up two Ollama instances (ports 11434 and 11435) with iGPU offloading configured
+- [ ] Set up three Ollama instances with iGPU offloading configured: port 11434 (embeddings, `keep_alive=-1`), port 11435 (generation primary: planner + synthesizer), port 11436 (generation researchers: researcher workers + critic on demand)
 - [ ] Define the `Tool` protocol and `ToolRegistry` in `tools/base.py` and `tools/registry.py`
 - [ ] Implement `tools.yaml` config loading with `yaml.safe_load()` — registry validates that every `module` path starts with `tools.` before importing; hard error at startup if not
 - [ ] Define `ALLOWED_MODELS` in `config.py`; validate all configured model names against it at startup with a hard error if any are missing
@@ -161,7 +165,7 @@ The planner receives the registry's tool schemas at runtime and selects from wha
 - [ ] Implement the researcher agent: `llama3.1:8b` with access to registered tools
 - [ ] Wire planner → researcher → synthesizer as a sequential pipeline (no parallelism yet)
 - [ ] Basic CLI interface: `python research.py "your query here"`
-- [ ] Log each agent's input/output to a JSON file for debugging
+- [ ] Log each agent's input/output to a JSON file for debugging — with guards: log rotation (max 10 MB per file, keep 5), max payload size per entry (truncate at 2K chars), excerpt-only for retrieved chunks (first 200 chars + chunk ID, not full text), and a `DEBUG_LOG_FULL_PAYLOADS` flag to opt into verbose logging; defaults to off
 
 **Success criterion:** A query like *"What are the main differences between RAG and Graph RAG?"* (answerable from your own indexed docs) returns a coherent cited answer end-to-end.
 
@@ -174,11 +178,11 @@ The planner receives the registry's tool schemas at runtime and selects from wha
 - [ ] Implement parallel agent dispatch using `asyncio` + two Ollama instances: N independent researcher workers, each handling one planner sub-task; orchestrator collects all results before passing to synthesizer
 - [ ] Have each researcher return a structured result object (source IDs, chunk IDs, excerpts, token counts) — no writes to ChromaDB during a query
 - [ ] Synthesizer receives the list of result objects directly from the orchestrator
-- [ ] Add a resource governor: concurrency limit (max 2 researchers at once), per-call context length cap, memory pressure fallback that reduces parallelism to 1 if RSS exceeds a configurable threshold (default: 26 GB)
+- [ ] Add a resource governor: concurrency limit (max 2 researchers at once), per-call context length cap, memory pressure fallback that reduces parallelism to 1 when available system memory drops below a configurable threshold (default: 6 GB free). Measure pressure via `psutil.virtual_memory().available` (captures OS, WSL2, Docker, and Ollama process footprint) plus swap activity (`psutil.swap_memory().sin > 0` as a hard signal); app RSS alone is not sufficient as it excludes native Ollama and GPU shared memory
 - [ ] Benchmark: track per run — total wall-clock time, per-stage latency (planner / each researcher / synthesizer / critic), peak RSS, swap pages faulted, model load time, prompt + context tokens per call, tokens/sec per model, cold vs warm run distinction, corpus size at time of run; minimum 5 queries across sequential and parallel configurations
 - [ ] Add a simple retry: if an agent returns an empty or malformed result, rerun it once
 
-**Success criterion:** Two-agent parallel run completes in less time than sequential, confirmed by benchmark.
+**Success criterion:** Two-agent parallel run completes in less time than sequential, confirmed by benchmark, without exceeding the memory pressure threshold or materially increasing swap/page faults relative to the sequential baseline.
 
 ---
 
@@ -225,9 +229,9 @@ The planner receives the registry's tool schemas at runtime and selects from wha
 | Component | Library | Notes |
 |---|---|---|
 | LLM calls | `ollama` Python SDK | Native streaming support |
-| Parallelism | `asyncio` + `httpx` | Two Ollama instances, async calls |
+| Parallelism | `asyncio` + `httpx` | Three Ollama instances: port 11434 (embeddings), 11435 (planner/synthesizer), 11436 (researchers/critic); async calls |
 | Vector store | ChromaDB | Lightweight, file-based, no separate server needed |
-| Graph store | NetworkX | In-memory, no separate server. Hard cap: 50K nodes / 200K edges; refuse ingestion beyond cap until pruning runs (drop edges below weight threshold, evict oldest nodes). At query time, load only the k-hop neighborhood of relevant nodes — not the full graph. Persist the graph as a serialized file (pickle) on disk; reload on startup. Fallback: if cap cannot be recovered by pruning, export the edge table to SQLite/DuckDB and query with SQL before considering Neo4j. |
+| Graph store | SQLite (edges/nodes) + NetworkX (per-query subgraph) | Edges and nodes are stored durably in SQLite tables; no full graph is held in RAM. At query time, fetch only the k-hop neighborhood of relevant nodes from SQLite and materialize a small NetworkX subgraph for traversal — then discard it. Hard cap: 50K nodes / 200K edges in SQLite; refuse ingestion beyond cap until pruning runs (drop edges below weight threshold, oldest nodes first). Pruning operates on the SQLite tables, not an in-memory graph. Fallback to DuckDB or Neo4j if SQLite query latency becomes a bottleneck. This replaces the earlier "pickle the full graph and reload on startup" approach, which would have kept the entire graph resident. |
 | Embeddings | `nomic-embed-text` via Ollama | Already in your stack |
 | Web framework | FastAPI | Minimal, fast, good async support |
 | UI | Gradio or plain HTML | Gradio for speed, plain HTML for control |
@@ -244,7 +248,7 @@ The planner receives the registry's tool schemas at runtime and selects from wha
 | Planner outputs malformed JSON | Medium | Strict output schema in system prompt + validation layer with retry |
 | 14B model too slow for interactive use | Medium | iGPU offloading + single planner call design; set expectation of 60–90s |
 | Agents hallucinate citations | Medium | Critic pass + force agents to quote chunk IDs, not generate citations freehand |
-| RAM pressure when all models loaded | Medium | Total budget is ~22–29 GB against a 32 GB pool shared with the iGPU; keep critic off the always-loaded set, monitor with `ollama ps` + Task Manager, evict summarizer if needed |
+| RAM pressure when all models loaded | Medium | Three Ollama instances with MAX_LOADED_MODELS=1 each; resource governor triggers parallelism reduction when available system memory drops below 6 GB free; keep critic off the always-loaded set; monitor with `ollama ps` + `psutil.virtual_memory()` |
 | Graph RAG and vector RAG return conflicting results | Low | Synthesizer prompt explicitly handles contradiction; critic flags it |
 | Tool misconfigured or unavailable at startup | Low | Registry validates all tools on load and fails fast with a clear error before any query is accepted |
 | Prompt injection via malicious corpus content | Low | Planner output validated against strict JSON schema before dispatch; model names checked against allowlist; user query and chunks treated as data in static templates, not as instructions |
