@@ -2,9 +2,9 @@
 
 ## Overview
 
-A locally-hosted multi-agent research assistant running entirely on a GMKtec K16 (Ryzen 7 7735HS, 32GB LPDDR5). The user submits a research query; a planner model decomposes it into sub-tasks, dispatches specialist agents in parallel, and synthesizes a final answer with citations — all without any cloud API calls.
+A locally-hosted multi-agent research assistant. The user submits a research query; a planner model decomposes it into sub-tasks, dispatches specialist agents in parallel, and synthesizes a final answer with citations — all without any cloud API calls.
 
-Builds directly on existing work: the vector RAG, Graph RAG, and coding assistant become callable tools in the agent tool layer.
+Designed to run on a GMKtec K16 (Ryzen 7 7735HS, 32GB LPDDR5) as a primary target, but packaged for deployment on Linux and macOS as well. The tool layer is registry-based and user-configurable: each deployment wires in whichever tools are relevant to it.
 
 ---
 
@@ -78,10 +78,12 @@ User query
      ▼              ▼
 ┌─────────────────────────────────┐
 │         Tool layer              │
-│  - Vector RAG                   │  ← existing work, promoted to callable tools
-│  - Graph RAG                    │
+│       (ToolRegistry)            │  ← planner receives schemas dynamically;
+│  - Vector RAG                   │    which tools are loaded is config-driven,
+│  - Graph RAG                    │    not hardcoded
 │  - Coding assistant             │
 │  - File reader / web fetch      │
+│  - … any Tool implementation    │
 └─────────────────────────────────┘
            │
            ▼
@@ -101,7 +103,33 @@ User query
       Final answer
 ```
 
-**Shared memory store:** `nomic-embed-text` + ChromaDB (or Qdrant). Agents read and write to a shared context store so the summarizer can see what the researcher found without manual passing.
+**Shared memory store:** `nomic-embed-text` + ChromaDB. Agents read and write to a shared context store so the summarizer can see what the researcher found without manual passing.
+
+**Tool registry:** Tools are not hardcoded — they register into a `ToolRegistry` at startup. Each tool implements a standard `Tool` protocol:
+
+```python
+class Tool(Protocol):
+    name: str
+    description: str
+    parameters: dict  # JSON schema
+    def run(self, **kwargs) -> str: ...
+```
+
+Which tools are loaded is controlled by `tools.yaml`:
+
+```yaml
+tools:
+  - module: tools.vector_rag
+    class: VectorRAGTool
+    config:
+      collection: my_docs
+  - module: tools.graph_rag
+    class: GraphRAGTool
+  - module: tools.file_reader
+    class: FileReaderTool
+```
+
+The planner receives the registry's tool schemas at runtime and selects from whatever is available. Adding a new tool means implementing the protocol and adding one entry to the config — no changes to the planner or agent code.
 
 ---
 
@@ -110,10 +138,12 @@ User query
 **Goal:** planner + researcher + RAG tool, end-to-end, no parallelism yet.
 
 - [ ] Set up two Ollama instances (ports 11434 and 11435) with iGPU offloading configured
-- [ ] Wrap existing vector RAG as a callable Python function with a JSON schema descriptor
-- [ ] Wrap existing Graph RAG as a callable Python function with a JSON schema descriptor
-- [ ] Implement the planner loop: prompt `qwen2.5:14b` with the user query + tool schemas, parse the structured task list it returns
-- [ ] Implement the researcher agent: `llama3.1:8b` with access to both RAG tools
+- [ ] Define the `Tool` protocol and `ToolRegistry` in `tools/base.py` and `tools/registry.py`
+- [ ] Implement `tools.yaml` config loading — registry reads which tools to instantiate at startup
+- [ ] Wrap existing vector RAG as a `Tool` implementation (`VectorRAGTool`)
+- [ ] Wrap existing Graph RAG as a `Tool` implementation (`GraphRAGTool`)
+- [ ] Implement the planner loop: prompt `qwen2.5:14b` with the user query + tool schemas from the registry, parse the structured task list it returns
+- [ ] Implement the researcher agent: `llama3.1:8b` with access to registered tools
 - [ ] Wire planner → researcher → synthesizer as a sequential pipeline (no parallelism yet)
 - [ ] Basic CLI interface: `python research.py "your query here"`
 - [ ] Log each agent's input/output to a JSON file for debugging
@@ -160,8 +190,10 @@ User query
 - [ ] Query history: store past queries + answers in SQLite, searchable
 - [ ] Background indexing: new documents get indexed without blocking the UI
 - [ ] Optional: streaming output so partial answers appear as agents complete
+- [ ] Docker Compose packaging: containerize the FastAPI app, ChromaDB, and SQLite; Ollama remains a native prerequisite (required for GPU access on all platforms)
+- [ ] Document the Ollama prerequisite and `tools.yaml` configuration in a setup guide
 
-**Success criterion:** A non-technical user could add a document and query it without touching the terminal.
+**Success criterion:** A non-technical user could add a document and query it without touching the terminal. A developer on Linux or macOS could stand up the stack with `docker compose up` after installing Ollama natively.
 
 ---
 
@@ -177,6 +209,8 @@ User query
 | Web framework | FastAPI | Minimal, fast, good async support |
 | UI | Gradio or plain HTML | Gradio for speed, plain HTML for control |
 | Persistence | SQLite | Query history, document metadata |
+| Tool interface | `Tool` protocol + `ToolRegistry` | Defined in `tools/base.py`; config-driven loading via `tools.yaml` |
+| Containerization | Docker + docker-compose | App + ChromaDB containerized; Ollama is a native prerequisite on all platforms |
 
 ---
 
@@ -189,6 +223,7 @@ User query
 | Agents hallucinate citations | Medium | Critic pass + force agents to quote chunk IDs, not generate citations freehand |
 | RAM pressure when all models loaded | Medium | Total budget is ~22–29 GB against a 32 GB pool shared with the iGPU; keep critic off the always-loaded set, monitor with `ollama ps` + Task Manager, evict summarizer if needed |
 | Graph RAG and vector RAG return conflicting results | Low | Synthesizer prompt explicitly handles contradiction; critic flags it |
+| Tool misconfigured or unavailable at startup | Low | Registry validates all tools on load and fails fast with a clear error before any query is accepted |
 
 ---
 
@@ -211,16 +246,21 @@ research-assistant/
 │   ├── summarizer.py       # lightweight summarization
 │   └── critic.py           # output quality checker
 ├── tools/
-│   ├── vector_rag.py       # wraps your existing vector RAG
-│   ├── graph_rag.py        # wraps your existing Graph RAG
-│   └── file_reader.py      # PDF/markdown ingestion
+│   ├── base.py             # Tool protocol definition
+│   ├── registry.py         # ToolRegistry: loads tools from tools.yaml, exposes schemas
+│   ├── vector_rag.py       # VectorRAGTool — wraps existing vector RAG
+│   ├── graph_rag.py        # GraphRAGTool — wraps existing Graph RAG
+│   └── file_reader.py      # FileReaderTool — PDF/markdown ingestion
 ├── memory/
 │   └── store.py            # ChromaDB shared context store
 ├── orchestrator.py         # main pipeline: plan → dispatch → synthesize
 ├── api.py                  # FastAPI endpoints
 ├── ui/
 │   └── index.html          # minimal frontend
+├── tools.yaml              # declares which tools to load and their config
 ├── config.py               # model names, Ollama URLs, paths
+├── Dockerfile              # app container (FastAPI + agents)
+├── docker-compose.yml      # app + ChromaDB; Ollama runs on host
 ├── benchmark.py            # latency testing
 └── research.py             # CLI entrypoint
 ```

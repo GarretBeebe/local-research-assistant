@@ -42,7 +42,7 @@ Full diagram, shared memory design, and rationale in the [project plan](notes/re
 
 ## Hardware & models
 
-Designed to run on a GMKtec K16 (Ryzen 7 7735HS, 32GB LPDDR5) with iGPU offloading via Ollama, using two Ollama instances for parallel agent execution. Both instances share a single model directory — models are downloaded once.
+Primary target is a GMKtec K16 (Ryzen 7 7735HS, 32GB LPDDR5) with iGPU offloading via Ollama, using two Ollama instances for parallel agent execution. Both instances share a single model directory — models are downloaded once. Also deployable on Linux and macOS via Docker Compose (Ollama runs natively on all platforms for GPU access).
 
 The iGPU draws from the same 32GB LPDDR5 pool as system RAM. Total memory budget for all models + RAG stores + OS is approximately 22–27 GB with the critic loaded on demand (recommended) or 24–29 GB with all models resident. Expect paging and degraded latency if usage exceeds ~28 GB.
 
@@ -65,6 +65,8 @@ The iGPU draws from the same 32GB LPDDR5 pool as system RAM. Total memory budget
 | Web framework | FastAPI |
 | UI | Gradio or plain HTML |
 | Persistence | SQLite |
+| Tool interface | `Tool` protocol + `ToolRegistry` (config-driven via `tools.yaml`) |
+| Containerization | Docker + docker-compose (app + ChromaDB; Ollama is a native prerequisite) |
 
 ## Roadmap
 
