@@ -147,7 +147,7 @@ tools:
     class: FileReaderTool
 ```
 
-The planner receives the registry's tool schemas at runtime and selects from whatever is available. Adding a new tool means implementing the protocol and adding one entry to the config — no changes to the planner or agent code.
+The planner receives the registry's tool schemas at runtime and selects from whatever is available. Adding a new tool means implementing the protocol, adding one entry to the config, and updating the compile-time tool allowlist — no changes to the planner or agent code.
 
 ---
 
@@ -213,7 +213,7 @@ The planner receives the registry's tool schemas at runtime and selects from wha
 - [ ] Security hardening for the web UI and ingestion endpoint:
   - Pydantic request validation per pipeline caps (query 12K chars, messages 200, model name 128 chars, chunks per query 20, planner tasks 10)
   - Local exposure invariant at startup: `ALLOW_INSECURE_LOCALONLY=true` hard-binds to 127.0.0.1/::1 and fails closed if `HOST` is 0.0.0.0 or any LAN address; ambiguous config (no API_KEY and no insecure flag) also fails closed
-  - Bearer token auth (`hmac.compare_digest()`) on `/v1/*` API endpoints only; session cookies (bcrypt, `secrets.token_hex(32)`, 8-hour expiry, HttpOnly + Secure + SameSite=Lax) on browser UI endpoints only — no endpoint accepts both
+  - Bearer token auth (`hmac.compare_digest()`) on `/v1/*` API endpoints only; session cookies (bcrypt, `secrets.token_hex(32)`, 8-hour expiry, HttpOnly + SameSite=Lax; `Secure=True` only when HTTPS is confirmed via trusted proxy or direct TLS) on browser UI endpoints only — no endpoint accepts both
   - Per-IP rate limiting (30 req/60s general, 10/60s login) via token-bucket middleware
   - Security headers middleware: `X-Content-Type-Options`, `X-Frame-Options`, `Content-Security-Policy: default-src 'self'` (plain HTML only; Gradio is not permitted in networked deployments)
   - Document ingestion: symlink rejection, `path.resolve()` + docs-root boundary check, 10 MB size limit before read, extension allowlist, MIME/magic-byte validation (`python-magic`), PDF extraction in subprocess with 30s timeout and 500-page limit, 50 MB extracted-text limit
@@ -235,7 +235,7 @@ The planner receives the registry's tool schemas at runtime and selects from wha
 | Graph store | SQLite (edges/nodes) + NetworkX (per-query subgraph) | Edges and nodes are stored durably in SQLite tables; no full graph is held in RAM. At query time, fetch only the k-hop neighborhood of relevant nodes from SQLite and materialize a small NetworkX subgraph for traversal — then discard it. Hard cap: 50K nodes / 200K edges in SQLite; refuse ingestion beyond cap until pruning runs (drop edges below weight threshold, oldest nodes first). Pruning operates on the SQLite tables, not an in-memory graph. Fallback to DuckDB or Neo4j if SQLite query latency becomes a bottleneck. This replaces the earlier "pickle the full graph and reload on startup" approach, which would have kept the entire graph resident. |
 | Embeddings | `nomic-embed-text` via Ollama | Already in your stack |
 | Web framework | FastAPI | Minimal, fast, good async support |
-| UI | Gradio or plain HTML | Gradio for speed, plain HTML for control |
+| UI | Plain HTML | Required for Phase 4 networked deployment and strict CSP. Gradio is allowed only as a local development prototype and must be replaced before Phase 4 is complete. |
 | Persistence | SQLite | Query history, document metadata |
 | Tool interface | `Tool` protocol + `ToolRegistry` | Defined in `tools/base.py`; config-driven loading via `tools.yaml` |
 | Containerization | Docker + docker-compose | App + ChromaDB containerized; Ollama is a native prerequisite on all platforms |
@@ -342,7 +342,7 @@ The server enforces a hard binding rule at startup, checked before any request i
 ### Web fetch tool — SSRF controls (optional tool, disabled by default)
 The web fetch tool conflicts with the "fully offline" project goal and is disabled by default (`enabled: false` in `tools.yaml`). When enabled by the operator, the following controls apply:
 - **URL scheme allowlist**: `https://` only; reject `http://`, `file://`, `ftp://`, `gopher://`, and all other schemes
-- **DNS/IP resolution check**: resolve the hostname before connecting; reject any result that is a loopback address (127.0.0.0/8, ::1), link-local (169.254.0.0/16, fe80::/10), private range (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fc00::/7), or unroutable (0.0.0.0, ::0). Connect using the resolved IP directly (do not re-resolve the hostname at connect time) and verify the peer address after connect matches the checked IP — this prevents DNS rebinding, where a TTL=0 record returns a public IP for the check but a private IP for the actual connection. Re-check after any redirect.
+- **DNS/IP resolution check**: resolve the hostname before connecting; reject any result that is a loopback address (127.0.0.0/8, ::1), link-local (169.254.0.0/16, fe80::/10), private range (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fc00::/7), or unroutable (0.0.0.0, ::0). Connect using the resolved IP directly (do not re-resolve the hostname at connect time), while still sending the original hostname for TLS SNI and verifying the certificate against the original hostname; never disable certificate verification. Verify the peer address after connect matches the checked IP — this prevents DNS rebinding, where a TTL=0 record returns a public IP for the check but a private IP for the actual connection. Re-check after any redirect.
 - **Redirect limit**: max 3 redirects; re-validate each redirect destination against the IP blocklist
 - **Response limits**: max 5 MB response body, 10s total timeout
 - **No cookies or auth headers forwarded** from the app to external hosts
