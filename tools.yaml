@@ -1,0 +1,3 @@
+tools:
+  - module: tools.vector_rag
+    class: VectorRAGTool

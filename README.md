@@ -6,7 +6,29 @@ Builds on existing vector RAG, Graph RAG, and coding assistant work, exposing th
 
 ## Status
 
-Early planning stage — no code yet. See [`notes/research-assistant-plan.md`](notes/research-assistant-plan.md) for the full project plan, architecture diagram, and phased roadmap.
+**Phase 1 complete** — the sequential pipeline is implemented and runnable. See [`notes/research-assistant-plan.md`](notes/research-assistant-plan.md) for the full project plan, architecture diagram, and phased roadmap.
+
+```
+python research.py "your query here"
+```
+
+## Setup
+
+**Prerequisites:** Ollama running locally with the required models pulled; `rag-system` running and accessible.
+
+```bash
+# Install dependencies
+uv sync
+
+# Configure environment
+cp .env.example .env
+# Edit .env: set RAG_BASE_URL and RAG_INTERNAL_TOKEN to match your rag-system
+
+# Run a query
+uv run python research.py "What is retrieval-augmented generation?"
+```
+
+Logs are written to `logs/pipeline.jsonl` (rotating, 10 MB max). Set `DEBUG_LOG_FULL_PAYLOADS=true` in `.env` to log full chunk text.
 
 ## Goals
 
@@ -43,7 +65,7 @@ Full diagram, shared memory design, and rationale in the [project plan](notes/re
 
 ## Hardware & models
 
-Primary target is a GMKtec K16 (Ryzen 7 7735HS, 32GB LPDDR5) with iGPU offloading via Ollama, using three Ollama instances: one dedicated to embeddings (port 11434, always-resident), one for the planner and synthesizer (port 11435), one for researcher workers and the critic (port 11436). All instances share a single model directory — models are downloaded once.
+Primary target is a GMKtec K16 (Ryzen 7 7735HS, 32GB LPDDR5) with iGPU offloading via Ollama. Phase 1 uses a single Ollama instance (default port 11434, configured via `OLLAMA_URL`). Phase 2 introduces three dedicated instances — one for embeddings, one for the planner/synthesizer, one for researcher workers — to prevent model-load churn under parallel dispatch. All instances share a single model directory.
 
 The iGPU draws from the same 32GB LPDDR5 pool as system RAM. Total memory budget for all models + RAG stores + OS is approximately 22–27 GB with the critic loaded on demand (recommended) or 24–29 GB with all models resident. Expect paging and degraded latency if usage exceeds ~28 GB. Also deployable on Linux and macOS via Docker Compose (Ollama runs natively on all platforms for GPU access).
 
@@ -83,9 +105,9 @@ Full security model with all controls and phase assignments: [`notes/research-as
 
 ## Roadmap
 
-- **Phase 1 — Foundation:** planner + researcher + RAG tool wired as a sequential pipeline, basic CLI
-- **Phase 2 — Parallelism + memory:** concurrent agent dispatch, resource governor, benchmarking (wall-clock, RSS, tokens/sec, cold vs warm)
-- **Phase 3 — Critic + quality loop:** self-correction pass, citation linking, confidence scoring
+- **Phase 1 — Foundation:** planner + researcher + RAG tool wired as a sequential pipeline, basic CLI ✓
+- **Phase 2 — Parallelism + memory:** concurrent agent dispatch, resource governor, three-instance Ollama split, benchmarking (wall-clock, RSS, tokens/sec, cold vs warm)
+- **Phase 3 — Critic + quality loop:** self-correction pass, GraphRAG tool, citation linking, confidence scoring
 - **Phase 4 — Interface + ingestion:** web UI, drag-and-drop document ingestion, query history
 
 Success criteria, risks/mitigations, and stretch goals are detailed in [`notes/research-assistant-plan.md`](notes/research-assistant-plan.md).

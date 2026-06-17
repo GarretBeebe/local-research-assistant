@@ -155,12 +155,11 @@ The planner receives the registry's tool schemas at runtime and selects from wha
 
 **Goal:** planner + researcher + RAG tool, end-to-end, no parallelism yet.
 
-- [ ] Set up three Ollama instances with iGPU offloading configured: port 11434 (embeddings, `keep_alive=-1`), port 11435 (generation primary: planner + synthesizer), port 11436 (generation researchers: researcher workers + critic on demand)
+- [ ] Set up a single Ollama instance (default port 11434) with iGPU offloading configured — three-instance routing (11434/11435/11436) is introduced in Phase 2 alongside parallel dispatch
 - [ ] Define the `Tool` protocol and `ToolRegistry` in `tools/base.py` and `tools/registry.py`
 - [ ] Implement `tools.yaml` config loading with `yaml.safe_load()` — registry validates each `module` + `class` pair against an explicit compile-time allowlist of known tool implementations; reject relative imports, duplicate names, and unlisted pairs with a hard startup error (a prefix check alone is insufficient)
 - [ ] Define `ALLOWED_MODELS` in `config.py`; validate all configured model names against it at startup with a hard error if any are missing
 - [ ] Wrap existing vector RAG as a `Tool` implementation (`VectorRAGTool`)
-- [ ] Wrap existing Graph RAG as a `Tool` implementation (`GraphRAGTool`)
 - [ ] Implement the planner loop: prompt `qwen2.5:14b` with the user query + tool schemas from the registry, parse the structured task list it returns
 - [ ] Validate planner output against a strict JSON schema before dispatching any agent: tool names must exist in the registry, model names must be in `ALLOWED_MODELS`; reject and retry once with the validation error if invalid
 - [ ] Implement the researcher agent: `llama3.1:8b` with access to registered tools
@@ -191,6 +190,7 @@ The planner receives the registry's tool schemas at runtime and selects from wha
 
 **Goal:** self-correcting output; critic flags gaps before the answer reaches the user.
 
+- [ ] Wrap existing Graph RAG as a `Tool` implementation (`GraphRAGTool`); add it to the compile-time allowlist and `tools.yaml`
 - [ ] Implement the critic agent (`qwen2.5:3b`): given the synthesized answer + original query, return a JSON object `{ "pass": bool, "issues": [...] }`
 - [ ] If critic fails, route back to planner with the issues list for one retry (max 1 re-plan to avoid infinite loops)
 - [ ] Add citation linking: each claim in the final answer traces back to a source document chunk
