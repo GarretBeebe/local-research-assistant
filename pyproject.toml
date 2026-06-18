@@ -12,6 +12,7 @@ dependencies = [
     "pyyaml",
     "jsonschema",
     "python-dotenv",
+    "psutil",
 ]
 
 [project.optional-dependencies]
@@ -21,7 +22,7 @@ dev = [
 ]
 
 [tool.setuptools]
-py-modules = ["config", "pipeline", "logging_utils", "models", "research"]
+py-modules = ["config", "pipeline", "logging_utils", "models", "research", "governor"]
 packages = ["agents", "tools"]
 
 [tool.pytest.ini_options]

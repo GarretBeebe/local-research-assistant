@@ -5,7 +5,7 @@ import ollama
 import config
 from models import ResearchResult
 
-_client = ollama.Client(host=config.OLLAMA_URL)
+_client = ollama.Client(host=config.OLLAMA_PLANNER_URL)
 
 
 def synthesize(question: str, results: list[ResearchResult]) -> str:

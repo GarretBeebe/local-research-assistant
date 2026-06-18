@@ -6,7 +6,9 @@ Builds on existing vector RAG, Graph RAG, and coding assistant work, exposing th
 
 ## Status
 
-**Phase 1 complete** — the sequential pipeline is implemented and runnable. See [`notes/research-assistant-plan.md`](notes/research-assistant-plan.md) for the full project plan, architecture diagram, and phased roadmap.
+**Phase 2 complete** — researchers dispatch concurrently via `asyncio.TaskGroup`; a `ResourceGovernor` caps parallelism and serializes under memory pressure; per-run benchmarks are written to `logs/benchmark.jsonl`. Three-instance Ollama split is wired (`OLLAMA_PLANNER_URL` / `OLLAMA_RESEARCHER_URL`) but all default to port 11434 until dedicated instances are started.
+
+See [`notes/research-assistant-plan.md`](notes/research-assistant-plan.md) for the full project plan, architecture diagram, and phased roadmap.
 
 ```
 python research.py "your query here"
@@ -28,7 +30,7 @@ cp .env.example .env
 uv run python research.py "What is retrieval-augmented generation?"
 ```
 
-Logs are written to `logs/pipeline.jsonl` (rotating, 10 MB max). Set `DEBUG_LOG_FULL_PAYLOADS=true` in `.env` to log full chunk text.
+Pipeline logs are written to `logs/pipeline.jsonl`; per-run benchmarks to `logs/benchmark.jsonl` (both rotating, 10 MB max). Set `DEBUG_LOG_FULL_PAYLOADS=true` in `.env` to log full chunk text. Set `MAX_CONCURRENT_RESEARCHERS` and `MEMORY_PRESSURE_THRESHOLD_MB` to tune the resource governor.
 
 ## Goals
 
@@ -65,7 +67,7 @@ Full diagram, shared memory design, and rationale in the [project plan](notes/re
 
 ## Hardware & models
 
-Primary target is a GMKtec K16 (Ryzen 7 7735HS, 32GB LPDDR5) with iGPU offloading via Ollama. Phase 1 uses a single Ollama instance (default port 11434, configured via `OLLAMA_URL`). Phase 2 introduces three dedicated instances — one for embeddings, one for the planner/synthesizer, one for researcher workers — to prevent model-load churn under parallel dispatch. All instances share a single model directory.
+Primary target is a GMKtec K16 (Ryzen 7 7735HS, 32GB LPDDR5) with iGPU offloading via Ollama. Phase 2 supports two dedicated Ollama instances to prevent model-load churn under parallel dispatch: one for planner/synthesizer (`OLLAMA_PLANNER_URL`) and one for researcher workers (`OLLAMA_RESEARCHER_URL`). Both default to port 11434; point them at separate ports once you have dedicated instances running. All instances share a single model directory.
 
 The iGPU draws from the same 32GB LPDDR5 pool as system RAM. Total memory budget for all models + RAG stores + OS is approximately 22–27 GB with the critic loaded on demand (recommended) or 24–29 GB with all models resident. Expect paging and degraded latency if usage exceeds ~28 GB. Also deployable on Linux and macOS via Docker Compose (Ollama runs natively on all platforms for GPU access).
 
@@ -82,7 +84,7 @@ The iGPU draws from the same 32GB LPDDR5 pool as system RAM. Total memory budget
 | Component | Library |
 |---|---|
 | LLM calls | `ollama` Python SDK |
-| Parallelism | `asyncio` + `httpx` |
+| Parallelism | `asyncio` + `asyncio.to_thread` |
 | Vector store | ChromaDB |
 | Graph store | SQLite (edges/nodes) + NetworkX (per-query subgraph) |
 | Web framework | FastAPI |
@@ -106,7 +108,7 @@ Full security model with all controls and phase assignments: [`notes/research-as
 ## Roadmap
 
 - **Phase 1 — Foundation:** planner + researcher + RAG tool wired as a sequential pipeline, basic CLI ✓
-- **Phase 2 — Parallelism + memory:** concurrent agent dispatch, resource governor, three-instance Ollama split, benchmarking (wall-clock, RSS, tokens/sec, cold vs warm)
+- **Phase 2 — Parallelism + memory:** concurrent agent dispatch, resource governor, two-instance Ollama split, benchmarking (wall-clock, RSS, tokens/sec, cold vs warm) ✓
 - **Phase 3 — Critic + quality loop:** self-correction pass, GraphRAG tool, citation linking, confidence scoring
 - **Phase 4 — Interface + ingestion:** web UI, drag-and-drop document ingestion, query history
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import asyncio
 import sys
 
 import config
@@ -25,7 +26,7 @@ def main() -> None:
     config.validate()
 
     from pipeline import run_pipeline
-    answer = run_pipeline(query)
+    answer = asyncio.run(run_pipeline(query))
     print(answer)
 
 

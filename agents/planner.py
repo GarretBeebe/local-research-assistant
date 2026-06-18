@@ -32,7 +32,7 @@ _TASK_LIST_SCHEMA = {
     },
 }
 
-_client = ollama.Client(host=config.OLLAMA_URL)
+_client = ollama.Client(host=config.OLLAMA_PLANNER_URL)
 
 
 class PlannerError(Exception):

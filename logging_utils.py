@@ -1,7 +1,10 @@
+import dataclasses
 import json
 import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+
+from models import BenchmarkResult
 
 _LOG_DIR = Path(__file__).parent / "logs"
 _LOG_DIR.mkdir(exist_ok=True)
@@ -15,6 +18,16 @@ _handler = RotatingFileHandler(
 )
 _handler.setFormatter(logging.Formatter("%(message)s"))
 _logger.addHandler(_handler)
+
+_bench_logger = logging.getLogger("benchmark")
+_bench_logger.setLevel(logging.DEBUG)
+_bench_handler = RotatingFileHandler(
+    str(_LOG_DIR / "benchmark.jsonl"),
+    maxBytes=10 * 1024 * 1024,
+    backupCount=5,
+)
+_bench_handler.setFormatter(logging.Formatter("%(message)s"))
+_bench_logger.addHandler(_bench_handler)
 
 _MAX_VALUE_LEN = 2_000
 
@@ -36,3 +49,7 @@ def log_stage(stage: str, input_data: dict, output_data: dict) -> None:
         "output": _truncate_value(output_data),
     }
     _logger.info(json.dumps(entry))
+
+
+def log_benchmark(bench: BenchmarkResult) -> None:
+    _bench_logger.info(json.dumps(dataclasses.asdict(bench)))
