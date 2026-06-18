@@ -9,25 +9,23 @@ from models import BenchmarkResult
 _LOG_DIR = Path(__file__).parent / "logs"
 _LOG_DIR.mkdir(exist_ok=True)
 
-_logger = logging.getLogger("pipeline")
-_logger.setLevel(logging.DEBUG)
-_handler = RotatingFileHandler(
-    str(_LOG_DIR / "pipeline.jsonl"),
-    maxBytes=10 * 1024 * 1024,
-    backupCount=5,
-)
-_handler.setFormatter(logging.Formatter("%(message)s"))
-_logger.addHandler(_handler)
 
-_bench_logger = logging.getLogger("benchmark")
-_bench_logger.setLevel(logging.DEBUG)
-_bench_handler = RotatingFileHandler(
-    str(_LOG_DIR / "benchmark.jsonl"),
-    maxBytes=10 * 1024 * 1024,
-    backupCount=5,
-)
-_bench_handler.setFormatter(logging.Formatter("%(message)s"))
-_bench_logger.addHandler(_bench_handler)
+def _make_logger(name: str, filename: str) -> logging.Logger:
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.DEBUG)
+    if not logger.handlers:
+        handler = RotatingFileHandler(
+            str(_LOG_DIR / filename),
+            maxBytes=10 * 1024 * 1024,
+            backupCount=5,
+        )
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        logger.addHandler(handler)
+    return logger
+
+
+_logger = _make_logger("pipeline", "pipeline.jsonl")
+_bench_logger = _make_logger("benchmark", "benchmark.jsonl")
 
 _MAX_VALUE_LEN = 2_000
 

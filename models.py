@@ -30,7 +30,7 @@ class BenchmarkResult:
     total_wall_clock_sec: float
     planner_wall_clock_sec: float
     synthesizer_wall_clock_sec: float
-    researcher_wall_clock_sec: list[float]  # one entry per task, in completion order
+    researcher_wall_clock_sec: list[float]  # one entry per task, in submission order
     peak_rss_mb: float
     swap_faults_in_start: int
     swap_faults_in_end: int

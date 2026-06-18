@@ -38,9 +38,18 @@ DEBUG_LOG_FULL_PAYLOADS: bool = os.getenv("DEBUG_LOG_FULL_PAYLOADS", "false").lo
 
 MAX_QUERY_LENGTH: int = 12_000
 
+
+def _parse_int_env(name: str, default: int) -> int:
+    raw = os.getenv(name, str(default))
+    try:
+        return int(raw)
+    except ValueError:
+        raise SystemExit(f"Invalid value for {name}={raw!r} — must be an integer") from None
+
+
 # Resource governor
-MAX_CONCURRENT_RESEARCHERS: int = int(os.getenv("MAX_CONCURRENT_RESEARCHERS", "2"))
-MEMORY_PRESSURE_THRESHOLD_MB: int = int(os.getenv("MEMORY_PRESSURE_THRESHOLD_MB", "6144"))
+MAX_CONCURRENT_RESEARCHERS: int = _parse_int_env("MAX_CONCURRENT_RESEARCHERS", 2)
+MEMORY_PRESSURE_THRESHOLD_MB: int = _parse_int_env("MEMORY_PRESSURE_THRESHOLD_MB", 6144)
 
 
 def validate() -> None:

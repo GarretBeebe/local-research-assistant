@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import sys
 import time
 
 import psutil
@@ -15,9 +16,11 @@ from logging_utils import log_benchmark, log_stage
 from models import BenchmarkResult, ResearchResult, Task
 from tools.registry import ToolRegistry
 
+_PROC = psutil.Process()
+
 
 def _rss_mb() -> float:
-    return psutil.Process().memory_info().rss >> 20
+    return _PROC.memory_info().rss >> 20
 
 
 async def run_pipeline(question: str) -> str:
@@ -38,17 +41,35 @@ async def run_pipeline(question: str) -> str:
     log_stage("plan", {"question": question}, {"tasks": [dataclasses.asdict(t) for t in tasks]})
 
     # Parallel research
+    rss_samples: list[float] = []
+
     async def dispatch(task: Task) -> ResearchResult:
         async with governor.slot():
             result = await asyncio.to_thread(research, task, registry)
-            if not result.finding.strip():
+        if not result.finding.strip():
+            print(f"Warning: empty finding for task {task.id!r}, retrying", file=sys.stderr)
+            first = result
+            async with governor.slot():
                 result = await asyncio.to_thread(research, task, registry)
-            return result
+            result = dataclasses.replace(
+                result,
+                prompt_tokens=result.prompt_tokens + first.prompt_tokens,
+                completion_tokens=result.completion_tokens + first.completion_tokens,
+                wall_clock_sec=result.wall_clock_sec + first.wall_clock_sec,
+            )
+        rss_samples.append(_rss_mb())
+        return result
 
-    async with asyncio.TaskGroup() as tg:
-        futures = [tg.create_task(dispatch(task)) for task in tasks]
+    # futures pre-initialized so the results line below can reference it after except*
+    futures: list = []
+    try:
+        async with asyncio.TaskGroup() as tg:
+            futures = [tg.create_task(dispatch(task)) for task in tasks]
+    except* Exception as eg:
+        for err in eg.exceptions:
+            print(f"Warning: researcher task failed: {err}", file=sys.stderr)
 
-    results = [f.result() for f in futures]
+    results = [f.result() for f in futures if not f.cancelled() and f.exception() is None]
     for result in results:
         log_stage(
             "research",
@@ -67,7 +88,8 @@ async def run_pipeline(question: str) -> str:
     )
 
     total_sec = time.monotonic() - t0
-    peak_rss = max(_rss_mb(), rss0)
+    rss_samples.append(_rss_mb())
+    peak_rss = max(rss_samples, default=rss0)
 
     bench = BenchmarkResult(
         query=question,
