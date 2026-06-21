@@ -1,3 +1,5 @@
 tools:
   - module: tools.vector_rag
     class: VectorRAGTool
+  - module: tools.graph_rag
+    class: GraphRAGTool

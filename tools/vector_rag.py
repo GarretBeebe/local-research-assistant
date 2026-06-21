@@ -6,8 +6,6 @@ import requests
 
 import config
 
-_session = requests.Session()
-
 
 class VectorRAGTool:
     name = "VectorRAGTool"
@@ -23,9 +21,12 @@ class VectorRAGTool:
         },
     }
 
+    def __init__(self) -> None:
+        self._session = requests.Session()
+
     def run(self, query: str) -> str:
         try:
-            resp = _session.post(
+            resp = self._session.post(
                 f"{config.RAG_BASE_URL}/v1/retrieve",
                 json={"query": query, "limit": 4},
                 headers={"Authorization": f"Bearer {config.RAG_INTERNAL_TOKEN}"},

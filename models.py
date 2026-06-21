@@ -25,6 +25,15 @@ class ResearchResult:
 
 
 @dataclass
+class CriticResult:
+    passed: bool
+    issues: list[str]
+    wall_clock_sec: float = 0.0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+
+
+@dataclass
 class BenchmarkResult:
     query: str
     total_wall_clock_sec: float
@@ -38,3 +47,7 @@ class BenchmarkResult:
     cold_loads: list[str]                   # task IDs where load_duration_ns > 1s
     total_prompt_tokens: int
     total_completion_tokens: int
+    critic_wall_clock_sec: float = 0.0
+    critic_passed: bool = False
+    re_planned: bool = False
+    confidence: int = 0

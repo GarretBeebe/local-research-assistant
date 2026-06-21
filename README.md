@@ -6,7 +6,9 @@ Builds on existing vector RAG, Graph RAG, and coding assistant work, exposing th
 
 ## Status
 
-**Phase 2 complete** — researchers dispatch concurrently via `asyncio.TaskGroup`; a `ResourceGovernor` caps parallelism and serializes under memory pressure; per-run benchmarks are written to `logs/benchmark.jsonl`. Three-instance Ollama split is wired (`OLLAMA_PLANNER_URL` / `OLLAMA_RESEARCHER_URL`) but all default to port 11434 until dedicated instances are started.
+**Phase 3 complete** — a `GraphRAGTool` wraps the sibling `local-graph-rag` service as a first-class researcher tool; the synthesizer outputs inline `[n]` citations and a 1–5 confidence score; a critic agent (`qwen2.5:3b`) evaluates every answer and triggers one re-plan cycle when it finds gaps. Benchmark logs now record `critic_passed`, `re_planned`, and `confidence` per run.
+
+Phase 2 features: researchers dispatch concurrently via `asyncio.TaskGroup`; a `ResourceGovernor` caps parallelism and serializes under memory pressure. Three-instance Ollama split is wired (`OLLAMA_PLANNER_URL` / `OLLAMA_RESEARCHER_URL`) but all default to port 11434 until dedicated instances are started.
 
 See [`notes/research-assistant-plan.md`](notes/research-assistant-plan.md) for the full project plan, architecture diagram, and phased roadmap.
 
@@ -16,7 +18,7 @@ python research.py "your query here"
 
 ## Setup
 
-**Prerequisites:** Ollama running locally with the required models pulled; `rag-system` running and accessible.
+**Prerequisites:** Ollama running locally with the required models pulled; `rag-system` and `local-graph-rag` running and accessible.
 
 ```bash
 # Install dependencies
@@ -24,13 +26,19 @@ uv sync
 
 # Configure environment
 cp .env.example .env
-# Edit .env: set RAG_BASE_URL and RAG_INTERNAL_TOKEN to match your rag-system
+# Edit .env:
+#   RAG_BASE_URL / RAG_INTERNAL_TOKEN  — match your rag-system .env
+#   GRAPH_RAG_BASE_URL                 — default http://localhost:8001
+#   GRAPH_RAG_API_KEY                  — match API_KEY in local-graph-rag .env
+#                                        (omit only if ALLOW_INSECURE_LOCALONLY=true)
+# Note: local-graph-rag defaults to port 8000; set API_PORT=8001 in its .env
+# to avoid conflicting with rag-system.
 
 # Run a query
 uv run python research.py "What is retrieval-augmented generation?"
 ```
 
-Pipeline logs are written to `logs/pipeline.jsonl`; per-run benchmarks to `logs/benchmark.jsonl` (both rotating, 10 MB max). Set `DEBUG_LOG_FULL_PAYLOADS=true` in `.env` to log full chunk text. Set `MAX_CONCURRENT_RESEARCHERS` and `MEMORY_PRESSURE_THRESHOLD_MB` to tune the resource governor.
+Pipeline logs are written to `logs/pipeline.jsonl`; per-run benchmarks to `logs/benchmark.jsonl` (both rotating, 10 MB max). Benchmark entries include `critic_passed`, `re_planned`, and `confidence` fields from Phase 3. Set `DEBUG_LOG_FULL_PAYLOADS=true` in `.env` to log full chunk text. Set `MAX_CONCURRENT_RESEARCHERS` and `MEMORY_PRESSURE_THRESHOLD_MB` to tune the resource governor.
 
 ## Goals
 
@@ -109,7 +117,7 @@ Full security model with all controls and phase assignments: [`notes/research-as
 
 - **Phase 1 — Foundation:** planner + researcher + RAG tool wired as a sequential pipeline, basic CLI ✓
 - **Phase 2 — Parallelism + memory:** concurrent agent dispatch, resource governor, two-instance Ollama split, benchmarking (wall-clock, RSS, tokens/sec, cold vs warm) ✓
-- **Phase 3 — Critic + quality loop:** self-correction pass, GraphRAG tool, citation linking, confidence scoring
+- **Phase 3 — Critic + quality loop:** GraphRAG tool, critic agent, one re-plan cycle on failure, inline citations, confidence scoring ✓
 - **Phase 4 — Interface + ingestion:** web UI, drag-and-drop document ingestion, query history
 
 Success criteria, risks/mitigations, and stretch goals are detailed in [`notes/research-assistant-plan.md`](notes/research-assistant-plan.md).

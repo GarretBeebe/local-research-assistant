@@ -1,4 +1,5 @@
 import os
+import sys
 
 import requests
 from dotenv import load_dotenv
@@ -15,9 +16,14 @@ OLLAMA_RESEARCHER_URL: str = os.getenv("OLLAMA_RESEARCHER_URL", OLLAMA_URL)
 RAG_BASE_URL: str = os.getenv("RAG_BASE_URL", "")
 RAG_INTERNAL_TOKEN: str = os.getenv("RAG_INTERNAL_TOKEN", "")
 
+GRAPH_RAG_BASE_URL: str = os.getenv("GRAPH_RAG_BASE_URL", "http://localhost:8001")
+GRAPH_RAG_API_KEY: str = os.getenv("GRAPH_RAG_API_KEY", "")
+GRAPH_RAG_MODEL: str = os.getenv("GRAPH_RAG_MODEL", "qwen2.5:14b")
+
 PLANNER_MODEL: str = "qwen2.5:14b"
 RESEARCHER_MODEL: str = "llama3.1:8b"
 SYNTHESIZER_MODEL: str = "qwen2.5:7b"
+CRITIC_MODEL: str = "qwen2.5:3b"
 
 # Chat-capable models only — do not include embedding-only models here.
 # The planner chooses from this set; the researcher executes with it.
@@ -54,7 +60,7 @@ MEMORY_PRESSURE_THRESHOLD_MB: int = _parse_int_env("MEMORY_PRESSURE_THRESHOLD_MB
 
 def validate() -> None:
     """Explicit startup validation. Call from the application entry point, not at import time."""
-    configured = {PLANNER_MODEL, RESEARCHER_MODEL, SYNTHESIZER_MODEL}
+    configured = {PLANNER_MODEL, RESEARCHER_MODEL, SYNTHESIZER_MODEL, CRITIC_MODEL}
     unknown = configured - CHAT_MODELS
     if unknown:
         raise SystemExit(f"Configured models not in CHAT_MODELS: {unknown}")
@@ -70,3 +76,13 @@ def validate() -> None:
             requests.get(f"{url}/api/tags", timeout=5).raise_for_status()
         except Exception as e:
             raise SystemExit(f"Ollama not reachable at {url}: {e}") from e
+
+    if not GRAPH_RAG_API_KEY:
+        print(
+            "Warning: GRAPH_RAG_API_KEY not set — assuming ALLOW_INSECURE_LOCALONLY=true",
+            file=sys.stderr,
+        )
+    try:
+        requests.get(f"{GRAPH_RAG_BASE_URL}/healthz", timeout=5).raise_for_status()
+    except Exception as e:
+        raise SystemExit(f"Graph RAG not reachable at {GRAPH_RAG_BASE_URL}: {e}") from e

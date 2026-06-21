@@ -12,6 +12,7 @@ from tools.base import Tool
 # any code in that namespace.
 TOOL_ALLOWLIST: dict[str, list[str]] = {
     "tools.vector_rag": ["VectorRAGTool"],
+    "tools.graph_rag": ["GraphRAGTool"],
 }
 
 _DEFAULT_TOOLS_YAML = Path(__file__).parent.parent / "tools.yaml"
