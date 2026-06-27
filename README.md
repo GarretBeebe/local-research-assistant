@@ -34,17 +34,20 @@ uv run uvicorn api:app --host 127.0.0.1 --port 8080
 
 **Docker Compose:**
 ```bash
-# Copy and fill in .env (ADMIN_PASSWORD_HASH, RAG_BASE_URL, etc.)
+# Copy and fill in .env (ADMIN_PASSWORD_HASH, API_KEY, RAG_BASE_URL, etc.)
 cp .env.example .env
 
 docker compose up
 ```
 
-`HOST` controls both `config.validate_server()` and uvicorn's bind address. Leave it unset
-in `.env` for the default `0.0.0.0` (required for Docker port mapping). To use
-`ALLOW_INSECURE_LOCALONLY=true` with Docker, set `HOST=127.0.0.1` in `.env` — but note that
-Docker port binding will then only expose the service on the host's loopback interface, which
-is the intended behaviour for local-only mode.
+`docker-compose.yml` always sets `HOST=0.0.0.0` inside the container so Docker's port
+publishing (`8080:8080`) is reachable. This means `ALLOW_INSECURE_LOCALONLY=true` is
+**incompatible with Docker** — `validate_server()` rejects a non-loopback `HOST` in insecure
+mode. Set `API_KEY` instead. To expose the published port only on the host's loopback
+interface, change the port binding in `docker-compose.yml` to `127.0.0.1:8080:8080`.
+
+`ALLOW_INSECURE_LOCALONLY=true` is for bare-metal or VM deployments where `HOST=127.0.0.1`
+actually controls the network binding.
 
 ## Setup
 

@@ -5,9 +5,10 @@ services:
       - "8080:8080"
     env_file: .env
     environment:
-      # HOST comes from .env; Dockerfile CMD defaults to 127.0.0.1 when HOST is unset.
-      # For LAN access set HOST=0.0.0.0 in .env — requires API_KEY (validate_server rejects
-      # ALLOW_INSECURE_LOCALONLY=true with a non-loopback HOST).
+      # Must be 0.0.0.0 inside the container so Docker's port publishing is reachable.
+      # ALLOW_INSECURE_LOCALONLY=true is incompatible with this — set API_KEY instead.
+      # To restrict access to the host only, change the port binding to 127.0.0.1:8080:8080.
+      HOST: "0.0.0.0"
       UPLOAD_STAGING_DIR: /app/staging
       DB_PATH: /app/data/research_assistant.db
     volumes:
