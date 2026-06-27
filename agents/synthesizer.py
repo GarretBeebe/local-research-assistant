@@ -25,7 +25,11 @@ class SynthesizerError(Exception):
     pass
 
 
-def synthesize(question: str, results: list[ResearchResult]) -> tuple[str, int]:
+def synthesize(
+    question: str,
+    results: list[ResearchResult],
+    failed_subs: list[str] | None = None,
+) -> tuple[str, int]:
     all_sources = list(dict.fromkeys(s for r in results for s in r.sources))
     source_index = {s: i + 1 for i, s in enumerate(all_sources)}
 
@@ -42,6 +46,11 @@ def synthesize(question: str, results: list[ResearchResult]) -> tuple[str, int]:
         "\n".join(f"[{i + 1}] {s}" for i, s in enumerate(all_sources)) or "None"
     )
 
+    failed_text = (
+        "\n\nUnanswered sub-questions (research failed — acknowledge these gaps):\n"
+        + "\n".join(f"- {s}" for s in (failed_subs or []))
+    ) if failed_subs else ""
+
     messages: list[dict] = [
         {
             "role": "system",
@@ -52,6 +61,8 @@ def synthesize(question: str, results: list[ResearchResult]) -> tuple[str, int]:
                 "[n] source_path for each cited source. "
                 "Set confidence to 1-5: 5 = fully covered with direct evidence, "
                 "1 = speculation or major gaps. "
+                "If unanswered sub-questions are provided, explicitly acknowledge those gaps "
+                "in the answer and lower the confidence score accordingly. "
                 'Respond ONLY with valid JSON: {"answer": "...", "confidence": 4}'
             ),
         },
@@ -61,6 +72,7 @@ def synthesize(question: str, results: list[ResearchResult]) -> tuple[str, int]:
                 f"Original question: {question}\n\n"
                 f"Research findings:\n{findings_text}\n\n"
                 f"Numbered source list:\n{sources_text}"
+                f"{failed_text}"
             ),
         },
     ]

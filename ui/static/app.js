@@ -49,7 +49,8 @@ queryForm.addEventListener('submit', async (e) => {
     }
     const data = await resp.json();
     showStatus(queryStatus, '', true);
-    resultMeta.textContent = `Confidence: ${data.confidence}/5`;
+    const partialNote = data.partial ? ' — partial result (some research tasks failed)' : '';
+    resultMeta.textContent = `Confidence: ${data.confidence}/5${partialNote}`;
     resultText.textContent = data.answer;
     resultBox.hidden = false;
     loadHistory();

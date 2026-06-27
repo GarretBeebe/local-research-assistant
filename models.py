@@ -39,6 +39,7 @@ class PipelineResult:
     confidence: int
     critic_passed: bool
     re_planned: bool
+    partial: bool = False
 
 
 @dataclass

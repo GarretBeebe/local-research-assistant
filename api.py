@@ -218,7 +218,12 @@ async def _run_and_store(query: str) -> dict:
         critic_passed=result.critic_passed,
         re_planned=result.re_planned,
     )
-    return {"answer": result.answer, "history_id": history_id, "confidence": result.confidence}
+    return {
+        "answer": result.answer,
+        "history_id": history_id,
+        "confidence": result.confidence,
+        "partial": result.partial,
+    }
 
 
 async def _accept_upload(upload: UploadFile) -> str:

@@ -33,6 +33,7 @@ class _CycleOut(NamedTuple):
     planner_sec: float
     synth_sec: float
     peak_rss_mb: float
+    failed_subs: list[str]
 
 
 def _build_benchmark(
@@ -120,9 +121,11 @@ async def _run_cycle(
         return result
 
     raw = await asyncio.gather(*[dispatch(task) for task in tasks], return_exceptions=True)
-    for item in raw:
+    failed_subs: list[str] = []
+    for item, task in zip(raw, tasks, strict=True):
         if isinstance(item, BaseException):
             _logger.warning("Researcher task failed: %s", item)
+            failed_subs.append(task.sub_question)
     results = [r for r in raw if isinstance(r, ResearchResult)]
     if not results:
         raise RuntimeError("All researcher tasks failed; cannot synthesize an answer")
@@ -134,7 +137,7 @@ async def _run_cycle(
         )
 
     t_synth = time.monotonic()
-    answer_text, confidence = synthesize(plan_question, results)
+    answer_text, confidence = synthesize(plan_question, results, failed_subs)
     synth_sec = time.monotonic() - t_synth
     log_stage(
         "synthesize",
@@ -150,6 +153,7 @@ async def _run_cycle(
         planner_sec=planner_sec,
         synth_sec=synth_sec,
         peak_rss_mb=max(rss_samples),
+        failed_subs=failed_subs,
     )
 
 
@@ -215,4 +219,5 @@ async def run_pipeline(question: str) -> PipelineResult:
         confidence=final.confidence,
         critic_passed=critic.passed,
         re_planned=re_planned,
+        partial=bool(final.failed_subs),
     )
