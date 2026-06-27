@@ -153,7 +153,7 @@ async function loadHistory() {
       <tr>
         <td>${escHtml(item.created_at.slice(0, 16).replace('T', ' '))}</td>
         <td title="${escHtml(item.answer)}">${escHtml(item.query.slice(0, 80))}${item.query.length > 80 ? '…' : ''}</td>
-        <td>${item.confidence ?? '—'}</td>
+        <td>${item.confidence ?? '—'}${item.partial ? ' (partial)' : ''}</td>
         <td><button class="del-btn" data-id="${item.id}">Delete</button></td>
       </tr>
     `).join('');

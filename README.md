@@ -10,7 +10,7 @@ Builds on existing vector RAG, Graph RAG, and coding assistant work, exposing th
 
 Phase 3: `GraphRAGTool`, critic agent (`qwen2.5:3b`), one re-plan cycle on failure, inline citations, 1–5 confidence scoring.
 
-Phase 2: parallel researcher dispatch via `asyncio.TaskGroup`, `ResourceGovernor`, benchmark logging.
+Phase 2: parallel researcher dispatch via `asyncio.gather` with per-task failure isolation, `ResourceGovernor`, benchmark logging.
 
 See [`notes/research-assistant-plan.md`](notes/research-assistant-plan.md) for the full project plan, architecture diagram, and phased roadmap.
 

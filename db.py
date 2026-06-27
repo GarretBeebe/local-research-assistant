@@ -4,7 +4,7 @@ import hashlib
 import secrets
 import sqlite3
 from collections.abc import Generator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from datetime import UTC, datetime, timedelta
 
 import config
@@ -47,9 +47,12 @@ def init_db() -> None:
                 confidence    INTEGER,
                 critic_passed INTEGER,
                 re_planned    INTEGER,
+                partial       INTEGER DEFAULT 0,
                 created_at    TEXT    NOT NULL
             )
         """)
+        with suppress(sqlite3.OperationalError):  # no-op if column already exists
+            conn.execute("ALTER TABLE queries ADD COLUMN partial INTEGER DEFAULT 0")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS sessions (
                 token      TEXT PRIMARY KEY,
@@ -66,18 +69,21 @@ def save_query(
     confidence: int | None = None,
     critic_passed: bool | None = None,
     re_planned: bool | None = None,
+    partial: bool | None = None,
 ) -> int:
     now = _utcnow_iso()
     with _db() as conn:
         cur = conn.execute(
-            "INSERT INTO queries (query, answer, confidence, critic_passed, re_planned, created_at)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO queries"
+            " (query, answer, confidence, critic_passed, re_planned, partial, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 query,
                 answer,
                 confidence,
                 int(critic_passed) if critic_passed is not None else None,
                 int(re_planned) if re_planned is not None else None,
+                int(partial) if partial is not None else None,
                 now,
             ),
         )
@@ -87,7 +93,7 @@ def save_query(
 def get_history(limit: int = 50) -> list[dict]:
     with _db() as conn:
         rows = conn.execute(
-            "SELECT id, query, answer, confidence, critic_passed, re_planned, created_at"
+            "SELECT id, query, answer, confidence, critic_passed, re_planned, partial, created_at"
             " FROM queries ORDER BY id DESC LIMIT ?",
             (limit,),
         ).fetchall()

@@ -217,6 +217,7 @@ async def _run_and_store(query: str) -> dict:
         confidence=result.confidence,
         critic_passed=result.critic_passed,
         re_planned=result.re_planned,
+        partial=result.partial,
     )
     return {
         "answer": result.answer,
