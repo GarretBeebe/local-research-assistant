@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
-import sys
+import logging
 
 import requests
 
 import config
+
+_logger = logging.getLogger(__name__)
 
 
 class GraphRAGTool:
@@ -22,16 +24,13 @@ class GraphRAGTool:
         },
     }
 
-    def __init__(self) -> None:
-        self._session = requests.Session()
-
     def run(self, query: str) -> str:
         headers: dict[str, str] = {}
         if config.GRAPH_RAG_API_KEY:
             headers["Authorization"] = f"Bearer {config.GRAPH_RAG_API_KEY}"
 
         try:
-            resp = self._session.post(
+            resp = requests.post(
                 f"{config.GRAPH_RAG_BASE_URL}/v1/chat/completions",
                 json={
                     # Required by schema; graph-rag ignores it and uses its own GEN_MODEL.
@@ -47,13 +46,13 @@ class GraphRAGTool:
             try:
                 return resp.json()["choices"][0]["message"]["content"]
             except (KeyError, IndexError, json.JSONDecodeError) as e:
-                print(f"Warning: GraphRAGTool unexpected response: {e}", file=sys.stderr)
+                _logger.warning("GraphRAGTool unexpected response: %s", e)
                 return ""
         except requests.exceptions.HTTPError as e:
             if e.response is not None and e.response.status_code < 500:
                 raise  # 4xx = auth/config problem, do not suppress
-            print(f"Warning: GraphRAGTool HTTP error: {e}", file=sys.stderr)
+            _logger.warning("GraphRAGTool HTTP error: %s", e)
             return ""
         except requests.exceptions.RequestException as e:
-            print(f"Warning: GraphRAGTool failed: {e}", file=sys.stderr)
+            _logger.warning("GraphRAGTool failed: %s", e)
             return ""

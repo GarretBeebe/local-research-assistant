@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-import sys
+import logging
 import time
 from typing import NamedTuple
 
@@ -19,6 +19,7 @@ from models import BenchmarkResult, PipelineResult, ResearchResult, Task
 from tools.registry import ToolRegistry
 
 _PROC = psutil.Process()
+_logger = logging.getLogger(__name__)
 
 
 def _rss_mb() -> float:
@@ -32,6 +33,39 @@ class _CycleOut(NamedTuple):
     planner_sec: float
     synth_sec: float
     peak_rss_mb: float
+
+
+def _build_benchmark(
+    question: str,
+    t0: float,
+    swap0: int,
+    all_results: list[ResearchResult],
+    final: _CycleOut,
+    planner_sec: float,
+    synth_sec: float,
+    peak_rss: float,
+    critic_sec: float,
+    critic_passed: bool,
+    re_planned: bool,
+) -> BenchmarkResult:
+    return BenchmarkResult(
+        query=question,
+        total_wall_clock_sec=time.monotonic() - t0,
+        planner_wall_clock_sec=planner_sec,
+        synthesizer_wall_clock_sec=synth_sec,
+        researcher_wall_clock_sec=[r.wall_clock_sec for r in final.results],
+        peak_rss_mb=peak_rss,
+        swap_faults_in_start=swap0,
+        swap_faults_in_end=psutil.swap_memory().sin,
+        concurrent_researchers=config.MAX_CONCURRENT_RESEARCHERS,
+        cold_loads=[r.task_id for r in all_results if r.load_duration_ns > 1_000_000_000],
+        total_prompt_tokens=sum(r.prompt_tokens for r in all_results),
+        total_completion_tokens=sum(r.completion_tokens for r in all_results),
+        critic_wall_clock_sec=critic_sec,
+        critic_passed=critic_passed,
+        re_planned=re_planned,
+        confidence=final.confidence,
+    )
 
 
 async def _run_cycle(
@@ -49,10 +83,9 @@ async def _run_cycle(
         )
 
     if len(plan_question) > config.MAX_QUERY_LENGTH:
-        print(
-            f"Warning: plan_question truncated from {len(plan_question)} "
-            f"to {config.MAX_QUERY_LENGTH} chars",
-            file=sys.stderr,
+        _logger.warning(
+            "plan_question truncated from %d to %d chars",
+            len(plan_question), config.MAX_QUERY_LENGTH,
         )
         plan_question = plan_question[:config.MAX_QUERY_LENGTH]
 
@@ -71,7 +104,7 @@ async def _run_cycle(
         async with governor.slot():
             result = await asyncio.to_thread(research, task, registry)
         if not result.finding.strip():
-            print(f"Warning: empty finding for task {task.id!r}, retrying", file=sys.stderr)
+            _logger.warning("Empty finding for task %r, retrying", task.id)
             first = result
             async with governor.slot():
                 result = await asyncio.to_thread(research, task, registry)
@@ -86,15 +119,13 @@ async def _run_cycle(
         rss_samples.append(_rss_mb())
         return result
 
-    futures: list = []
-    try:
-        async with asyncio.TaskGroup() as tg:
-            futures = [tg.create_task(dispatch(task)) for task in tasks]
-    except* Exception as eg:
-        for err in eg.exceptions:
-            print(f"Warning: researcher task failed: {err}", file=sys.stderr)
-
-    results = [f.result() for f in futures if not f.cancelled() and f.exception() is None]
+    raw = await asyncio.gather(*[dispatch(task) for task in tasks], return_exceptions=True)
+    for item in raw:
+        if isinstance(item, BaseException):
+            _logger.warning("Researcher task failed: %s", item)
+    results = [r for r in raw if isinstance(r, ResearchResult)]
+    if not results:
+        raise RuntimeError("All researcher tasks failed; cannot synthesize an answer")
     for result in results:
         log_stage(
             "research",
@@ -164,23 +195,18 @@ async def run_pipeline(question: str) -> PipelineResult:
         synth_sec += c2.synth_sec
         peak_rss = max(peak_rss, c2.peak_rss_mb)
 
-    bench = BenchmarkResult(
-        query=question,
-        total_wall_clock_sec=time.monotonic() - t0,
-        planner_wall_clock_sec=planner_sec,
-        synthesizer_wall_clock_sec=synth_sec,
-        researcher_wall_clock_sec=[r.wall_clock_sec for r in final.results],
-        peak_rss_mb=peak_rss,
-        swap_faults_in_start=swap0,
-        swap_faults_in_end=psutil.swap_memory().sin,
-        concurrent_researchers=config.MAX_CONCURRENT_RESEARCHERS,
-        cold_loads=[r.task_id for r in all_results if r.load_duration_ns > 1_000_000_000],
-        total_prompt_tokens=sum(r.prompt_tokens for r in all_results),
-        total_completion_tokens=sum(r.completion_tokens for r in all_results),
-        critic_wall_clock_sec=critic_sec,
+    bench = _build_benchmark(
+        question=question,
+        t0=t0,
+        swap0=swap0,
+        all_results=all_results,
+        final=final,
+        planner_sec=planner_sec,
+        synth_sec=synth_sec,
+        peak_rss=peak_rss,
+        critic_sec=critic_sec,
         critic_passed=critic.passed,
         re_planned=re_planned,
-        confidence=final.confidence,
     )
     log_benchmark(bench)
 

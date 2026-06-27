@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-import sys
+import logging
 
 import requests
 
 import config
+
+_logger = logging.getLogger(__name__)
 
 
 class VectorRAGTool:
@@ -21,12 +23,9 @@ class VectorRAGTool:
         },
     }
 
-    def __init__(self) -> None:
-        self._session = requests.Session()
-
     def run(self, query: str) -> str:
         try:
-            resp = self._session.post(
+            resp = requests.post(
                 f"{config.RAG_BASE_URL}/v1/retrieve",
                 json={"query": query, "limit": 4},
                 headers={"Authorization": f"Bearer {config.RAG_INTERNAL_TOKEN}"},
@@ -41,10 +40,10 @@ class VectorRAGTool:
         except requests.exceptions.HTTPError as e:
             if e.response is not None and e.response.status_code < 500:
                 raise  # 4xx = auth/config problem, do not suppress
-            print(f"Warning: VectorRAGTool HTTP error: {e}", file=sys.stderr)
+            _logger.warning("VectorRAGTool HTTP error: %s", e)
             return ""
         except Exception as e:
-            print(f"Warning: VectorRAGTool failed: {e}", file=sys.stderr)
+            _logger.warning("VectorRAGTool failed: %s", e)
             return ""
 
         if not chunks:

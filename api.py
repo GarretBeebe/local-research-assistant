@@ -229,9 +229,10 @@ async def _accept_upload(upload: UploadFile) -> str:
     # Unique prefix prevents concurrent uploads of the same filename from overwriting each other.
     dest = staging / f"{secrets.token_hex(8)}_{filename}"
 
-    contents = await upload.read(ingest._MAX_FILE_BYTES + 1)
-    if len(contents) > ingest._MAX_FILE_BYTES:
-        raise HTTPException(status_code=413, detail="File exceeds 10 MB limit")
+    contents = await upload.read(ingest.MAX_FILE_BYTES + 1)
+    if len(contents) > ingest.MAX_FILE_BYTES:
+        _mb = ingest.MAX_FILE_BYTES // (1024 * 1024)
+        raise HTTPException(status_code=413, detail=f"File exceeds {_mb} MB limit")
 
     try:
         await asyncio.to_thread(dest.write_bytes, contents)
@@ -243,7 +244,11 @@ async def _accept_upload(upload: UploadFile) -> str:
         dest.unlink(missing_ok=True)
         raise
 
-    job_id = ingest.create_job(filename)
+    try:
+        job_id = ingest.create_job(filename)
+    except ingest.IngestError as e:
+        dest.unlink(missing_ok=True)
+        raise HTTPException(status_code=503, detail=str(e)) from e
     task = asyncio.create_task(ingest.run_background_indexing(job_id, dest, filename))
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
@@ -306,7 +311,11 @@ async def get_index(request: Request) -> Response:
         return RedirectResponse(url="/login", status_code=303)
     return _TEMPLATES.TemplateResponse(
         "index.html",
-        {"request": request, "csrf_token": session["csrf_token"]},
+        {
+            "request": request,
+            "csrf_token": session["csrf_token"],
+            "max_query_length": config.MAX_QUERY_LENGTH,
+        },
     )
 
 

@@ -1,18 +1,23 @@
 from __future__ import annotations
 
+import hashlib
 import secrets
 import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
-_DB_PATH = Path(__file__).parent / "research_assistant.db"
+import config
+
 _SESSION_TTL_HOURS = 8
 
 
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(_DB_PATH))
+    conn = sqlite3.connect(str(config.DB_PATH))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
@@ -103,7 +108,7 @@ def create_session() -> tuple[str, str]:
     with _db() as conn:
         conn.execute(
             "INSERT INTO sessions (token, csrf_token, created_at, expires_at) VALUES (?, ?, ?, ?)",
-            (token, csrf_token, now.isoformat(), expires.isoformat()),
+            (_hash_token(token), csrf_token, now.isoformat(), expires.isoformat()),
         )
     return token, csrf_token
 
@@ -112,16 +117,18 @@ def get_session(token: str) -> dict | None:
     with _db() as conn:
         row = conn.execute(
             "SELECT token, csrf_token, created_at, expires_at FROM sessions WHERE token = ?",
-            (token,),
+            (_hash_token(token),),
         ).fetchone()
     if row is None:
         return None
-    return dict(row)
+    result = dict(row)
+    result["token"] = token  # return the raw token, not the stored hash
+    return result
 
 
 def delete_session(token: str) -> None:
     with _db() as conn:
-        conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+        conn.execute("DELETE FROM sessions WHERE token = ?", (_hash_token(token),))
 
 
 def prune_expired_sessions() -> None:

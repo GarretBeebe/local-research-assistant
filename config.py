@@ -72,6 +72,7 @@ TRUSTED_PROXY_IPS: list[str] = [
     ip.strip() for ip in os.getenv("TRUSTED_PROXY_IPS", "").split(",") if ip.strip()
 ]
 UPLOAD_STAGING_DIR: Path = Path(os.getenv("UPLOAD_STAGING_DIR", "./staging"))
+DB_PATH: Path = Path(os.getenv("DB_PATH", str(Path(__file__).parent / "research_assistant.db")))
 
 # TODO: confirm ingestion endpoint signatures with rag-system and local-graph-rag
 RAG_INGEST_URL: str = os.getenv("RAG_INGEST_URL", "")
