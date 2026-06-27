@@ -32,6 +32,20 @@ uv run uvicorn api:app --host 127.0.0.1 --port 8080
 # Then open http://localhost:8080
 ```
 
+**Docker Compose:**
+```bash
+# Copy and fill in .env (ADMIN_PASSWORD_HASH, RAG_BASE_URL, etc.)
+cp .env.example .env
+
+docker compose up
+```
+
+`HOST` controls both `config.validate_server()` and uvicorn's bind address. Leave it unset
+in `.env` for the default `0.0.0.0` (required for Docker port mapping). To use
+`ALLOW_INSECURE_LOCALONLY=true` with Docker, set `HOST=127.0.0.1` in `.env` — but note that
+Docker port binding will then only expose the service on the host's loopback interface, which
+is the intended behaviour for local-only mode.
+
 ## Setup
 
 **Prerequisites:** Ollama running locally with the required models pulled; `rag-system` and `local-graph-rag` running and accessible.
@@ -121,11 +135,12 @@ The iGPU draws from the same 32GB LPDDR5 pool as system RAM. Total memory budget
 
 The project follows the same security patterns established in the sibling `local-graph-rag` and `rag-system` projects, extended for the multi-agent architecture:
 
-- **Startup fails closed**: server requires either a configured `API_KEY` or `ALLOW_INSECURE_LOCALONLY=true` (loopback-only). Ambiguous config is a hard startup error.
+- **Startup fails closed**: server requires either a configured `API_KEY` (min 32 chars) or `ALLOW_INSECURE_LOCALONLY=true` (loopback-only binding). `ADMIN_PASSWORD_HASH` must be a valid bcrypt hash — format is validated at startup so a misconfigured value produces a clear error rather than silently locking out all logins.
 - **Tool registry allowlist**: `tools.yaml` entries are validated against an explicit compile-time allowlist of known module+class pairs; arbitrary code loading is rejected at startup.
 - **Planner output treated as untrusted**: task list is validated against a strict JSON schema (tool names, model names) before any agent is dispatched.
-- **Three-way auth separation**: bearer tokens for `/v1/*` API, session cookies for browser UI, no overlap. CSRF tokens on state-changing cookie-authenticated routes.
-- **Document ingestion hardening**: symlink rejection, path boundary checks, MIME/magic-byte validation, PDF extraction in a sandboxed subprocess with timeout and page limit.
+- **Three-way auth separation**: bearer tokens for `/v1/*` API, session cookies for browser UI (`/ui/*`), no overlap. `/ui/*` is browser-only — non-browser clients should use `/v1/*`. CSRF tokens on all state-changing cookie-authenticated routes.
+- **Document ingestion hardening**: symlink rejection, path boundary checks, MIME/magic-byte validation (`magic.MagicException` handled), PDF extraction in a sandboxed subprocess with timeout and page limit. Staging file cleaned up on any validation or write failure.
+- **Rate limiting**: token-bucket per real IP (30 req/60s general, 10 req/60s on POST `/login`), capped at 10,000 tracked IPs to bound memory under rotating/spoofed source addresses.
 
 Full security model with all controls and phase assignments: [`notes/research-assistant-plan.md § Security`](notes/research-assistant-plan.md).
 

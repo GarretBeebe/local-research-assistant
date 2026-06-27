@@ -74,6 +74,13 @@ def validate_upload(path: Path, staging_dir: Path) -> None:
 def _check_mime(path: Path, ext: str) -> None:
     try:
         import magic
+    except ImportError:
+        print(
+            "Warning: python-magic not available; skipping MIME/magic-byte validation",
+            file=sys.stderr,
+        )
+        return
+    try:
         header = path.read_bytes()[:_MIME_MAGIC_BYTES]
         detected = magic.from_buffer(header, mime=True)
         expected_prefix = _MIME_FOR_EXT[ext]
@@ -81,11 +88,8 @@ def _check_mime(path: Path, ext: str) -> None:
             raise IngestError(
                 f"MIME type mismatch: file declared as {ext!r} but detected as {detected!r}"
             )
-    except ImportError:
-        print(
-            "Warning: python-magic not available; skipping MIME/magic-byte validation",
-            file=sys.stderr,
-        )
+    except magic.MagicException as e:
+        raise IngestError(f"MIME detection failed: {e}") from e
 
 
 def _extract_pdf(path: Path) -> str:
@@ -168,8 +172,7 @@ def _index_graph(filename: str, text: str) -> None:
         raise IngestError(f"Graph RAG ingest failed: {e}") from e
 
 
-async def run_background_indexing(job_id: str, path: Path) -> None:
-    filename = path.name
+async def run_background_indexing(job_id: str, path: Path, filename: str) -> None:
     _jobs[job_id]["status"] = "indexing"
     try:
         text = await asyncio.to_thread(_extract_text, path)
@@ -184,6 +187,10 @@ async def run_background_indexing(job_id: str, path: Path) -> None:
     except Exception as e:
         _jobs[job_id]["status"] = "failed"
         _jobs[job_id]["error"] = f"Unexpected error: {e}"
+    except BaseException:
+        _jobs[job_id]["status"] = "failed"
+        _jobs[job_id]["error"] = "Cancelled"
+        raise
     finally:
         path.unlink(missing_ok=True)
 

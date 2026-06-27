@@ -5,7 +5,6 @@ import hmac
 import ipaddress
 import secrets
 import time
-from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,6 +23,7 @@ import db
 import ingest
 
 _UI_DIR = Path(__file__).parent / "ui"
+_MAX_BUCKET_SIZE = 10_000
 _TEMPLATES = Jinja2Templates(directory=str(_UI_DIR))
 _SESSION_COOKIE = "session"
 _CSRF_HEADER = "X-CSRF-Token"
@@ -89,8 +89,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self._gen_cap = float(general_limit)
         self._login_rate = login_limit / login_window
         self._login_cap = float(login_limit)
-        self._buckets: dict[str, _Bucket] = defaultdict(lambda: _Bucket(self._gen_cap))
-        self._login_buckets: dict[str, _Bucket] = defaultdict(lambda: _Bucket(self._login_cap))
+        self._buckets: dict[str, _Bucket] = {}
+        self._login_buckets: dict[str, _Bucket] = {}
 
     def _consume(self, bucket: _Bucket, rate: float, cap: float) -> bool:
         now = time.monotonic()
@@ -107,6 +107,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         buckets = self._login_buckets if is_login else self._buckets
         rate = self._login_rate if is_login else self._gen_rate
         cap = self._login_cap if is_login else self._gen_cap
+        if ip not in buckets:
+            if len(buckets) >= _MAX_BUCKET_SIZE:
+                buckets.pop(next(iter(buckets)))  # evict oldest (insertion order)
+            buckets[ip] = _Bucket(cap)
         if not self._consume(buckets[ip], rate, cap):
             return Response("Too Many Requests", status_code=429)
         return await call_next(request)
@@ -181,7 +185,7 @@ def _require_bearer(request: Request) -> None:
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Bearer token required")
-    provided = auth[len("Bearer "):]
+    provided = auth[len("Bearer "):].strip()
     if not hmac.compare_digest(provided.encode(), config.API_KEY.encode()):
         raise HTTPException(status_code=401, detail="Invalid bearer token")
 
@@ -228,10 +232,10 @@ async def _accept_upload(upload: UploadFile) -> str:
     contents = await upload.read(ingest._MAX_FILE_BYTES + 1)
     if len(contents) > ingest._MAX_FILE_BYTES:
         raise HTTPException(status_code=413, detail="File exceeds 10 MB limit")
-    await asyncio.to_thread(dest.write_bytes, contents)
 
     try:
-        ingest.validate_upload(dest, staging)
+        await asyncio.to_thread(dest.write_bytes, contents)
+        await asyncio.to_thread(ingest.validate_upload, dest, staging)
     except ingest.IngestError as e:
         dest.unlink(missing_ok=True)
         raise HTTPException(status_code=422, detail=str(e)) from e
@@ -240,7 +244,7 @@ async def _accept_upload(upload: UploadFile) -> str:
         raise
 
     job_id = ingest.create_job(filename)
-    task = asyncio.create_task(ingest.run_background_indexing(job_id, dest))
+    task = asyncio.create_task(ingest.run_background_indexing(job_id, dest, filename))
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
     return job_id
@@ -271,7 +275,7 @@ async def post_login(request: Request) -> Response:
             status_code=401,
         )
 
-    token, _csrf = db.create_session()
+    token, _csrf = db.create_session()  # CSRF token is embedded in GET / HTML, not this redirect
     resp = RedirectResponse(url="/", status_code=303)
     resp.set_cookie(
         _SESSION_COOKIE,
@@ -291,7 +295,7 @@ async def post_logout(request: Request) -> Response:
         _check_csrf(request, session)
         db.delete_session(session["token"])
     resp = RedirectResponse(url="/login", status_code=303)
-    resp.delete_cookie(_SESSION_COOKIE)
+    resp.delete_cookie(_SESSION_COOKIE, secure=_cookie_secure(request))
     return resp
 
 

@@ -34,23 +34,24 @@ def _db() -> Generator[sqlite3.Connection, None, None]:
 def init_db() -> None:
     with _db() as conn:
         conn.execute("PRAGMA journal_mode=WAL")
-        conn.executescript("""
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS queries (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                query      TEXT    NOT NULL,
-                answer     TEXT    NOT NULL,
-                confidence INTEGER,
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                query         TEXT    NOT NULL,
+                answer        TEXT    NOT NULL,
+                confidence    INTEGER,
                 critic_passed INTEGER,
                 re_planned    INTEGER,
-                created_at TEXT   NOT NULL
-            );
-
+                created_at    TEXT    NOT NULL
+            )
+        """)
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS sessions (
                 token      TEXT PRIMARY KEY,
                 csrf_token TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 expires_at TEXT NOT NULL
-            );
+            )
         """)
 
 

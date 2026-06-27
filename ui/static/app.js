@@ -105,10 +105,10 @@ function pollJob(jobId) {
       const job = await resp.json();
       if (job.status === 'done') {
         clearInterval(iv);
-        showStatus(uploadStatus, `Indexed: ${escHtml(job.filename)}`);
+        showStatus(uploadStatus, `Indexed: ${job.filename}`);
       } else if (job.status === 'failed') {
         clearInterval(iv);
-        showStatus(uploadStatus, `Indexing failed: ${escHtml(job.error || 'unknown error')}`);
+        showStatus(uploadStatus, `Indexing failed: ${job.error || 'unknown error'}`);
       }
     } catch {
       clearInterval(iv);
@@ -143,6 +143,10 @@ historyBody.addEventListener('click', async (e) => {
 async function loadHistory() {
   try {
     const resp = await fetch('/ui/history');
+    if (!resp.ok) {
+      if (resp.status === 401) window.location.href = '/login';
+      return;
+    }
     const items = await resp.json();
     historyBody.innerHTML = items.map((item) => `
       <tr>

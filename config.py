@@ -3,6 +3,7 @@ import os
 import sys
 from pathlib import Path
 
+import bcrypt
 import requests
 from dotenv import load_dotenv
 
@@ -113,6 +114,10 @@ def validate_server() -> None:
             "  python -c \"import bcrypt; "
             "print(bcrypt.hashpw(b'yourpass', bcrypt.gensalt()).decode())\""
         )
+    try:
+        bcrypt.checkpw(b"probe", ADMIN_PASSWORD_HASH.encode())
+    except ValueError as e:
+        raise SystemExit(f"ADMIN_PASSWORD_HASH is not a valid bcrypt hash: {e}") from e
 
 
 def validate() -> None:

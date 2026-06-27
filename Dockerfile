@@ -21,4 +21,6 @@ USER appuser
 EXPOSE 8080
 
 # Single worker required — job status is tracked in process memory.
-CMD ["uv", "run", "uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]
+# Shell form so uvicorn's --host follows the HOST env var (must match config.HOST for
+# validate_server() to agree on whether the binding is loopback-only).
+CMD ["sh", "-c", "uv run uvicorn api:app --host \"${HOST:-0.0.0.0}\" --port \"${PORT:-8080}\" --workers 1"]
