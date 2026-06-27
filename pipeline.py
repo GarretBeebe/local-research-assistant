@@ -15,7 +15,7 @@ from agents.researcher import research
 from agents.synthesizer import synthesize
 from governor import ResourceGovernor
 from logging_utils import log_benchmark, log_stage
-from models import BenchmarkResult, ResearchResult, Task
+from models import BenchmarkResult, PipelineResult, ResearchResult, Task
 from tools.registry import ToolRegistry
 
 _PROC = psutil.Process()
@@ -122,7 +122,7 @@ async def _run_cycle(
     )
 
 
-async def run_pipeline(question: str) -> str:
+async def run_pipeline(question: str) -> PipelineResult:
     registry = ToolRegistry()
     governor = ResourceGovernor(
         max_concurrent=config.MAX_CONCURRENT_RESEARCHERS,
@@ -184,4 +184,9 @@ async def run_pipeline(question: str) -> str:
     )
     log_benchmark(bench)
 
-    return final.answer_text
+    return PipelineResult(
+        answer=final.answer_text,
+        confidence=final.confidence,
+        critic_passed=critic.passed,
+        re_planned=re_planned,
+    )

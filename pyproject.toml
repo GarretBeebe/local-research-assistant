@@ -13,6 +13,13 @@ dependencies = [
     "jsonschema",
     "python-dotenv",
     "psutil",
+    "fastapi",
+    "uvicorn[standard]",
+    "python-multipart",
+    "bcrypt",
+    "python-magic",
+    "pypdf",
+    "jinja2",
 ]
 
 [project.optional-dependencies]
@@ -22,7 +29,7 @@ dev = [
 ]
 
 [tool.setuptools]
-py-modules = ["config", "pipeline", "logging_utils", "models", "research", "governor"]
+py-modules = ["config", "pipeline", "logging_utils", "models", "research", "governor", "api", "db", "ingest"]
 packages = ["agents", "tools"]
 
 [tool.pytest.ini_options]

@@ -34,6 +34,14 @@ class CriticResult:
 
 
 @dataclass
+class PipelineResult:
+    answer: str
+    confidence: int
+    critic_passed: bool
+    re_planned: bool
+
+
+@dataclass
 class BenchmarkResult:
     query: str
     total_wall_clock_sec: float

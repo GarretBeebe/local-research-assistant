@@ -6,14 +6,30 @@ Builds on existing vector RAG, Graph RAG, and coding assistant work, exposing th
 
 ## Status
 
-**Phase 3 complete** — a `GraphRAGTool` wraps the sibling `local-graph-rag` service as a first-class researcher tool; the synthesizer outputs inline `[n]` citations and a 1–5 confidence score; a critic agent (`qwen2.5:3b`) evaluates every answer and triggers one re-plan cycle when it finds gaps. Benchmark logs now record `critic_passed`, `re_planned`, and `confidence` per run.
+**Phase 4 complete** — FastAPI web UI with session-cookie auth (bcrypt, CSRF), bearer-token `/v1/*` API, per-IP rate limiting, security headers, document upload with full validation, SQLite query history, and Docker Compose packaging. Two items remain wired-but-stubbed pending final configuration: RAG ingest endpoint signatures and three-instance Ollama routing.
 
-Phase 2 features: researchers dispatch concurrently via `asyncio.TaskGroup`; a `ResourceGovernor` caps parallelism and serializes under memory pressure. Three-instance Ollama split is wired (`OLLAMA_PLANNER_URL` / `OLLAMA_RESEARCHER_URL`) but all default to port 11434 until dedicated instances are started.
+Phase 3: `GraphRAGTool`, critic agent (`qwen2.5:3b`), one re-plan cycle on failure, inline citations, 1–5 confidence scoring.
+
+Phase 2: parallel researcher dispatch via `asyncio.TaskGroup`, `ResourceGovernor`, benchmark logging.
 
 See [`notes/research-assistant-plan.md`](notes/research-assistant-plan.md) for the full project plan, architecture diagram, and phased roadmap.
 
+**CLI:**
 ```
 python research.py "your query here"
+```
+
+**Web UI:**
+```bash
+# Generate a bcrypt password hash
+python -c "import bcrypt; print(bcrypt.hashpw(b'yourpassword', bcrypt.gensalt()).decode())"
+
+# Add to .env:
+#   ADMIN_PASSWORD_HASH=<hash from above>
+#   ALLOW_INSECURE_LOCALONLY=true  (loopback only, no API bearer token needed)
+
+uv run uvicorn api:app --host 127.0.0.1 --port 8080
+# Then open http://localhost:8080
 ```
 
 ## Setup
@@ -118,6 +134,6 @@ Full security model with all controls and phase assignments: [`notes/research-as
 - **Phase 1 — Foundation:** planner + researcher + RAG tool wired as a sequential pipeline, basic CLI ✓
 - **Phase 2 — Parallelism + memory:** concurrent agent dispatch, resource governor, two-instance Ollama split, benchmarking (wall-clock, RSS, tokens/sec, cold vs warm) ✓
 - **Phase 3 — Critic + quality loop:** GraphRAG tool, critic agent, one re-plan cycle on failure, inline citations, confidence scoring ✓
-- **Phase 4 — Interface + ingestion:** web UI, drag-and-drop document ingestion, query history
+- **Phase 4 — Interface + ingestion:** web UI, session auth (bcrypt + CSRF), bearer-token API, document upload, query history, Docker Compose ✓
 
 Success criteria, risks/mitigations, and stretch goals are detailed in [`notes/research-assistant-plan.md`](notes/research-assistant-plan.md).

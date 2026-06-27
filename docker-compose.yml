@@ -1,0 +1,38 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    env_file: .env
+    environment:
+      # Override HOST inside the container — the container always listens on 0.0.0.0.
+      # ALLOW_INSECURE_LOCALONLY is still enforced for external callers via the port binding.
+      HOST: "0.0.0.0"
+      UPLOAD_STAGING_DIR: /app/staging
+    volumes:
+      # Docs corpus: mount read-only so the container cannot modify your documents.
+      # Change the left side to wherever your documents live.
+      - ./docs:/app/docs:ro
+      # Staging and DB are named volumes so they persist across restarts.
+      - staging:/app/staging
+      - db:/app/data
+    # Reach Ollama, rag-system, and local-graph-rag running natively on the host.
+    # On Linux: uncomment the line below. On Docker Desktop (Mac/Windows), host.docker.internal
+    # is available automatically.
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+volumes:
+  staging:
+  db:
+
+# Prerequisites (run natively — not containerized here):
+#   - Ollama:          ollama serve  (default port 11434)
+#   - rag-system:      uv run uvicorn api:app --port 8000
+#   - local-graph-rag: uv run uvicorn api:app --port 8001
+#
+# In your .env, point the URLs at host.docker.internal instead of localhost:
+#   OLLAMA_URL=http://host.docker.internal:11434
+#   RAG_BASE_URL=http://host.docker.internal:8000
+#   GRAPH_RAG_BASE_URL=http://host.docker.internal:8001

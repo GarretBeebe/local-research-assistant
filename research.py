@@ -26,8 +26,8 @@ def main() -> None:
     config.validate()
 
     from pipeline import run_pipeline
-    answer = asyncio.run(run_pipeline(query))
-    print(answer)
+    result = asyncio.run(run_pipeline(query))
+    print(result.answer)
 
 
 if __name__ == "__main__":

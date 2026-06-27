@@ -1,5 +1,7 @@
+import ipaddress
 import os
 import sys
+from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
@@ -56,6 +58,61 @@ def _parse_int_env(name: str, default: int) -> int:
 # Resource governor
 MAX_CONCURRENT_RESEARCHERS: int = _parse_int_env("MAX_CONCURRENT_RESEARCHERS", 2)
 MEMORY_PRESSURE_THRESHOLD_MB: int = _parse_int_env("MEMORY_PRESSURE_THRESHOLD_MB", 6144)
+
+
+# ── Web server ────────────────────────────────────────────────────────────────
+
+HOST: str = os.getenv("HOST", "127.0.0.1")
+PORT: int = _parse_int_env("PORT", 8080)
+API_KEY: str = os.getenv("API_KEY", "")
+ALLOW_INSECURE_LOCALONLY: bool = os.getenv("ALLOW_INSECURE_LOCALONLY", "false").lower() == "true"
+ADMIN_PASSWORD_HASH: str = os.getenv("ADMIN_PASSWORD_HASH", "")
+TRUSTED_PROXY_IPS: list[str] = [
+    ip.strip() for ip in os.getenv("TRUSTED_PROXY_IPS", "").split(",") if ip.strip()
+]
+UPLOAD_STAGING_DIR: Path = Path(os.getenv("UPLOAD_STAGING_DIR", "./staging"))
+
+# TODO: confirm ingestion endpoint signatures with rag-system and local-graph-rag
+RAG_INGEST_URL: str = os.getenv("RAG_INGEST_URL", "")
+GRAPH_RAG_INGEST_URL: str = os.getenv("GRAPH_RAG_INGEST_URL", "")
+
+def _is_loopback(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def validate_server() -> None:
+    """Server-specific startup validation. Call from the FastAPI lifespan, not research.py."""
+    if ALLOW_INSECURE_LOCALONLY:
+        if not _is_loopback(HOST):
+            raise SystemExit(
+                f"ALLOW_INSECURE_LOCALONLY=true requires HOST to be a loopback address, "
+                f"got {HOST!r}"
+            )
+        cors = os.getenv("CORS_ORIGINS", "")
+        if cors.strip() == "*":
+            raise SystemExit("ALLOW_INSECURE_LOCALONLY=true is incompatible with CORS_ORIGINS=*")
+
+    if not ALLOW_INSECURE_LOCALONLY and not API_KEY:
+        raise SystemExit(
+            "Ambiguous security config: set API_KEY (min 32 chars) for bearer-token auth, "
+            "or set ALLOW_INSECURE_LOCALONLY=true to restrict to loopback only. "
+            "Refusing to start without one of these."
+        )
+
+    if API_KEY and len(API_KEY) < 32:
+        raise SystemExit(f"API_KEY must be at least 32 characters, got {len(API_KEY)}")
+
+    if not ADMIN_PASSWORD_HASH:
+        raise SystemExit(
+            "ADMIN_PASSWORD_HASH is required. Generate with:\n"
+            "  python -c \"import bcrypt; "
+            "print(bcrypt.hashpw(b'yourpass', bcrypt.gensalt()).decode())\""
+        )
 
 
 def validate() -> None:
